@@ -58,8 +58,17 @@ export async function decide(p: HookPayload): Promise<Answer> {
     toolInput: p.tool_input, toolUseId: p.tool_use_id, state: 'pending',
   };
 
-  // 1. The edit lock: one chat per project may change code.
   const isEdit = EDIT_TOOLS.has(p.tool_name);
+
+  // 0. Discuss mode never edits, whatever the rules say.
+  if (isEdit && run.mode === 'discuss') {
+    const reason = 'This chat is in Discuss mode, so file edits are refused. Propose the change instead; the user switches the chat to Build to implement it.';
+    const row = record(run.runId, p, 'denied', 'mode', undefined, reason);
+    feed.append(run.chatId, { ...base, approvalId: row.id, state: 'denied', decidedBy: 'mode', reason });
+    return { decision: 'deny', reason };
+  }
+
+  // 1. The edit lock: one chat per project may change code.
   const holder = editLocks.get(project.id);
   if (isEdit && holder !== undefined && holder !== run.chatId) {
     const reason = 'Another chat in this project is changing code right now. Wait for it to finish, then try again.';

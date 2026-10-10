@@ -7,12 +7,12 @@ import { randomUUID } from 'node:crypto';
 import { existsSync, statSync } from 'node:fs';
 import { basename, isAbsolute } from 'node:path';
 import { and, desc, eq } from 'drizzle-orm';
-import { Decision, HookPayload, NewProject, NewRule, SendMessage, SetModel, type Chat } from '../shared/contracts.ts';
+import { ChatSettings, Decision, HookPayload, NewProject, NewRule, ProjectSettings, SendMessage, type Chat } from '../shared/contracts.ts';
 import { config } from './config.ts';
 import { db, chats, projects, rules } from './db.ts';
 import * as feed from './feed.ts';
 import { decide, hookResponse, lockHolder, resolveApproval } from './hook.ts';
-import { isRunning, startTurn, stopTurn } from './runner.ts';
+import { effectiveModel, isRunning, startTurn, stopTurn } from './runner.ts';
 import { TEMPLATE_RULES } from './rules.ts';
 
 const app = new Hono();
@@ -38,9 +38,18 @@ app.post('/api/projects', async c => {
   if (db.select().from(projects).where(eq(projects.path, path)).get())
     return c.json({ error: 'that folder is already a project' }, 400);
 
-  const project = db.insert(projects).values({ name: body.data.name || basename(path), path, createdAt: now() }).returning().get();
+  const project = db.insert(projects)
+    .values({ name: body.data.name || basename(path), path, discussModel: config.defaultModel, buildModel: config.defaultModel, createdAt: now() })
+    .returning().get();
   for (const r of TEMPLATE_RULES) db.insert(rules).values({ ...r, projectId: project.id }).run();
   return c.json(project);
+});
+
+app.post('/api/projects/:id/settings', async c => {
+  const body = ProjectSettings.safeParse(await c.req.json());
+  if (!body.success) return c.json({ error: 'both models are required' }, 400);
+  const row = db.update(projects).set(body.data).where(eq(projects.id, Number(c.req.param('id')))).returning().get();
+  return row ? c.json(row) : c.json({ error: 'no such project' }, 404);
 });
 
 // --- Rules ----------------------------------------------------------------------------------------
@@ -63,8 +72,11 @@ app.delete('/api/projects/:id/rules/:ruleId', c => {
 
 // --- Chats ----------------------------------------------------------------------------------------
 function toChat(row: typeof chats.$inferSelect): Chat {
+  const project = db.select().from(projects).where(eq(projects.id, row.projectId)).get()!;
   return {
-    id: row.id, projectId: row.projectId, title: row.title, sessionId: row.sessionId, model: row.model,
+    id: row.id, projectId: row.projectId, title: row.title, sessionId: row.sessionId, mode: row.mode,
+    discussModel: effectiveModel(row, project, 'discuss'), buildModel: effectiveModel(row, project, 'build'),
+    discussModelOverridden: row.discussModel !== null, buildModelOverridden: row.buildModel !== null,
     createdAt: row.createdAt, running: isRunning(row.id), holdsEditLock: lockHolder(row.projectId) === row.id,
   };
 }
@@ -76,7 +88,7 @@ app.post('/api/projects/:id/chats', c => {
   const projectId = Number(c.req.param('id'));
   if (!db.select().from(projects).where(eq(projects.id, projectId)).get()) return c.json({ error: 'no such project' }, 404);
   const row = db.insert(chats)
-    .values({ projectId, title: 'New chat', sessionId: randomUUID(), model: config.defaultModel, createdAt: now() })
+    .values({ projectId, title: 'New chat', sessionId: randomUUID(), mode: 'discuss', createdAt: now() })
     .returning().get();
   return c.json(toChat(row));
 });
@@ -94,11 +106,14 @@ app.post('/api/chats/:id/messages', async c => {
   return r.ok ? c.json({ ok: true }) : c.json({ error: r.error }, 409);
 });
 
-app.post('/api/chats/:id/model', async c => {
-  const body = SetModel.safeParse(await c.req.json());
-  if (!body.success) return c.json({ error: 'model is required' }, 400);
-  db.update(chats).set({ model: body.data.model }).where(eq(chats.id, Number(c.req.param('id')))).run();
-  return c.json({ ok: true });
+app.post('/api/chats/:id/settings', async c => {
+  const id = Number(c.req.param('id'));
+  const body = ChatSettings.safeParse(await c.req.json());
+  if (!body.success) return c.json({ error: 'bad settings' }, 400);
+  // The mode and models are fixed for the duration of a turn.
+  if (isRunning(id)) return c.json({ error: 'wait for the current turn to finish' }, 409);
+  const row = db.update(chats).set(body.data).where(eq(chats.id, id)).returning().get();
+  return row ? c.json(toChat(row)) : c.json({ error: 'no such chat' }, 404);
 });
 
 app.post('/api/chats/:id/stop', c => c.json({ ok: stopTurn(Number(c.req.param('id'))) }));

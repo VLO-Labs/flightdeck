@@ -2,13 +2,15 @@
 import { spawn, execFileSync, type ChildProcess } from 'node:child_process';
 import { createInterface } from 'node:readline';
 import { eq } from 'drizzle-orm';
-import { ClaudeEvent } from '../shared/contracts.ts';
+import { ClaudeEvent, type Mode } from '../shared/contracts.ts';
 import { config } from './config.ts';
 import { db, chats, projects, runs } from './db.ts';
 import * as feed from './feed.ts';
 import { cancelPendingForRun, releaseLockForChat } from './hook.ts';
 
-type Active = { runId: number; chatId: number; projectId: number; proc: ChildProcess; stopRequested: boolean };
+type Active = {
+  runId: number; chatId: number; projectId: number; mode: Mode; proc: ChildProcess; stopRequested: boolean;
+};
 const active = new Map<number, Active>(); // by chatId
 
 export const isRunning = (chatId: number) => active.has(chatId);
@@ -20,6 +22,20 @@ export const activeRunForSession = (sessionId: string) => {
 };
 
 const now = () => new Date().toISOString();
+
+// Discuss mode is enforced by the hook (edits are refused); this tells the agent up front, so it
+// plans instead of trying edits and hitting refusals.
+const DISCUSS_PROMPT =
+  'You are in Flightdeck DISCUSS mode. Read the code, analyze, answer questions and propose plans, ' +
+  'but do not modify files or run commands that change state — file edits will be refused. When a ' +
+  'plan is ready, say so: the user switches the chat to BUILD mode to implement it, and you will ' +
+  'keep this conversation as context.';
+
+export function effectiveModel(
+  chat: typeof chats.$inferSelect, project: typeof projects.$inferSelect, mode: Mode,
+): string {
+  return mode === 'build' ? chat.buildModel ?? project.buildModel : chat.discussModel ?? project.discussModel;
+}
 
 function gitHead(path: string): string | null {
   try {
@@ -68,6 +84,8 @@ export function startTurn(chatId: number, text: string): { ok: true } | { ok: fa
   const project = db.select().from(projects).where(eq(projects.id, chat.projectId)).get();
   if (!project) return { ok: false, error: 'no such project' };
 
+  const mode = chat.mode;
+  const model = effectiveModel(chat, project, mode);
   const run = db
     .insert(runs)
     .values({ chatId, status: 'running', headBefore: gitHead(project.path), startedAt: now() })
@@ -79,16 +97,17 @@ export function startTurn(chatId: number, text: string): { ok: true } | { ok: fa
     chat.started ? '--resume' : '--session-id', chat.sessionId,
     '--output-format', 'stream-json', '--verbose', '--include-partial-messages',
     '--settings', hookSettings(),
-    '--model', chat.model,
+    '--model', model,
   ];
+  if (mode === 'discuss') args.push('--append-system-prompt', DISCUSS_PROMPT);
 
   // stdin closed: otherwise the CLI waits 3 s for piped input and prints a non-JSON warning.
   const proc = spawn(config.claudeBin, args, { cwd: project.path, env: childEnv(), stdio: ['ignore', 'pipe', 'pipe'] });
-  const a: Active = { runId: run.id, chatId, projectId: project.id, proc, stopRequested: false };
+  const a: Active = { runId: run.id, chatId, projectId: project.id, mode, proc, stopRequested: false };
   active.set(chatId, a);
   if (!chat.started) db.update(chats).set({ started: true }).where(eq(chats.id, chatId)).run();
 
-  feed.append(chatId, { kind: 'user', at: now(), runId: run.id, text });
+  feed.append(chatId, { kind: 'user', at: now(), runId: run.id, text, mode, model });
   feed.append(chatId, { kind: 'run', at: now(), runId: run.id, status: 'started' });
 
   let resultSeen = false;

@@ -114,6 +114,13 @@ pre { background: var(--code); padding: 8px; border-radius: 6px; overflow-x: aut
 .card-actions input { flex: 1; min-width: 160px; }
 button.deny, button.stop { background: var(--bad); color: #fff; }
 
+.mode-toggle { display: inline-flex; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
+.mode-toggle button { background: none; color: var(--muted); border-radius: 0; padding: 4px 10px; }
+.mode-toggle button.on { background: var(--accent); color: var(--accent-text); }
+.msg-tag { font-size: 11px; color: var(--muted); margin-top: 4px; white-space: normal; }
+.model-defaults { display: flex; gap: 16px; flex-wrap: wrap; }
+.model-defaults label { display: flex; gap: 8px; align-items: center; }
+
 .composer {
   border-top: 1px solid var(--line); padding: 10px 16px; display: flex; gap: 8px; align-items: flex-end;
   background: var(--panel); flex-wrap: wrap;

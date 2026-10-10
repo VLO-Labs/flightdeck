@@ -11,7 +11,7 @@ type Activity = {
   result?: { text: string; isError: boolean }; approval?: Approval;
 };
 type Block =
-  | { kind: 'user'; key: string; text: string }
+  | { kind: 'user'; key: string; text: string; tag?: string }
   | { kind: 'text'; key: string; text: string }
   | Activity
   | { kind: 'note'; key: string; text: string; tone: 'muted' | 'bad' | 'good' }
@@ -42,7 +42,9 @@ function derive(items: FeedItem[]): Derived {
   items.forEach((it, i) => {
     const key = `${i}`;
     if (it.kind === 'user') {
-      blocks.push({ kind: 'user', key, text: it.text });
+      const label = MODELS.find(m => m.id === it.model)?.label ?? it.model;
+      const tag = it.mode ? `${it.mode === 'build' ? 'Build' : 'Discuss'}${label ? ` · ${label}` : ''}` : undefined;
+      blocks.push({ kind: 'user', key, text: it.text, tag });
     } else if (it.kind === 'run') {
       running = it.status === 'started';
       partial = '';
@@ -112,7 +114,8 @@ export function ChatView({ chat, project, onChanged }: { chat: Chat; project: Pr
   const [connected, setConnected] = useState(false);
   const [draft, setDraft] = useState('');
   const [error, setError] = useState('');
-  const [model, setModel] = useState(chat.model);
+  const [cur, setCur] = useState(chat); // optimistic copy of the chat's mode/models
+  useEffect(() => setCur(chat), [chat]);
   const bottom = useRef<HTMLDivElement>(null);
   const stick = useRef(true);
 
@@ -169,18 +172,26 @@ export function ChatView({ chat, project, onChanged }: { chat: Chat; project: Pr
       <header className="chat-header">
         <div className="chat-name">{chat.title}</div>
         <div className="chat-meta">
-          <select
-            value={model}
-            disabled={d.running}
-            title="Model for the next message"
-            onChange={async e => {
-              setModel(e.target.value);
-              await api.setModel(chat.id, e.target.value);
-            }}
-          >
-            {MODELS.map(m => <option key={m.id} value={m.id}>{m.label}</option>)}
-            {!MODELS.some(m => m.id === model) && <option value={model}>{model}</option>}
-          </select>
+          <div className="mode-toggle" title="Discuss: read, analyze, plan — edits are refused. Build: may change code.">
+            {(['discuss', 'build'] as const).map(m => (
+              <button
+                key={m}
+                className={cur.mode === m ? 'on' : ''}
+                disabled={d.running}
+                onClick={async () => {
+                  if (cur.mode === m) return;
+                  setError('');
+                  try { setCur(await api.chatSettings(chat.id, { mode: m })); } catch (e) { setError((e as Error).message); }
+                }}
+              >
+                {m === 'discuss' ? 'Discuss' : 'Build'}
+              </button>
+            ))}
+          </div>
+          <ModelPicker chat={cur} project={project} disabled={d.running} onChange={async (field, value) => {
+            setError('');
+            try { setCur(await api.chatSettings(chat.id, { [field]: value })); } catch (e) { setError((e as Error).message); }
+          }} />
           {d.rateLimit && <RateLimitBadge r={d.rateLimit} />}
           {!connected && <span className="badge bad">reconnecting…</span>}
         </div>
@@ -196,7 +207,12 @@ export function ChatView({ chat, project, onChanged }: { chat: Chat; project: Pr
         {d.blocks.map(b => {
           switch (b.kind) {
             case 'user':
-              return <div key={b.key} className="msg user">{b.text}</div>;
+              return (
+                <div key={b.key} className="msg user">
+                  {b.text}
+                  {b.tag && <div className="msg-tag">{b.tag}</div>}
+                </div>
+              );
             case 'text':
               return <div key={b.key} className="msg assistant"><Markdown remarkPlugins={[remarkGfm]}>{b.text}</Markdown></div>;
             case 'note':
@@ -277,7 +293,7 @@ function ActivityLine({ a, rel }: { a: Activity; rel: (p: unknown) => string }) 
 }
 
 function decidedText(ap: Approval): string {
-  const who = { user: 'you', rule: `rule ${ap.rule ?? ''}`.trim(), timeout: 'timeout', lock: 'edit lock' }[ap.decidedBy ?? 'user'];
+  const who = { user: 'you', rule: `rule ${ap.rule ?? ''}`.trim(), timeout: 'timeout', lock: 'edit lock', mode: 'Discuss mode' }[ap.decidedBy ?? 'user'];
   return `${ap.state === 'allowed' ? 'Allowed' : 'Denied'} by ${who}${ap.reason && ap.state === 'denied' ? ` — ${ap.reason}` : ''}`;
 }
 
@@ -326,6 +342,28 @@ function ApprovalCard({ a, rel, inline }: { a: Approval; rel: (p: unknown) => st
       </div>
       {error && <div className="error">{error}</div>}
     </div>
+  );
+}
+
+// The model for the chat's current mode. "Project default" clears the chat's override.
+function ModelPicker({ chat, project, disabled, onChange }: {
+  chat: Chat; project: Project; disabled: boolean;
+  onChange: (field: 'discussModel' | 'buildModel', value: string | null) => void;
+}) {
+  const field = chat.mode === 'build' ? 'buildModel' : 'discussModel';
+  const overridden = chat.mode === 'build' ? chat.buildModelOverridden : chat.discussModelOverridden;
+  const projectDefault = project[field];
+  const label = (id: string) => MODELS.find(m => m.id === id)?.label ?? id;
+  return (
+    <select
+      value={overridden ? chat[field] : ''}
+      disabled={disabled}
+      title={`Model for ${chat.mode === 'build' ? 'Build' : 'Discuss'} turns in this chat`}
+      onChange={e => onChange(field, e.target.value || null)}
+    >
+      <option value="">{label(projectDefault)} (project default)</option>
+      {MODELS.map(m => <option key={m.id} value={m.id}>{m.label}</option>)}
+    </select>
   );
 }
 

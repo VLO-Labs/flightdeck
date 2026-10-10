@@ -93,7 +93,7 @@ export function App() {
               ))}
             </nav>
             <button className={`link ${view.kind === 'rules' ? 'active' : ''}`} onClick={() => setView({ kind: 'rules' })}>
-              Approval rules
+              Project settings
             </button>
             <div className="path" title={project.path}>{project.path}</div>
           </>
@@ -105,7 +105,9 @@ export function App() {
         {view.kind === 'chat' && chat && project && (
           <ChatView key={chat.id} chat={chat} project={project} onChanged={refreshChats} />
         )}
-        {view.kind === 'rules' && project && <RulesView key={project.id} project={project} />}
+        {view.kind === 'rules' && project && (
+          <RulesView key={project.id} project={project} onProjectChanged={p => setProjects(ps => ps.map(x => (x.id === p.id ? p : x)))} />
+        )}
         {view.kind === 'none' && (
           <div className="empty">
             {project ? 'Open a chat or start a new one.' : 'Add a project: a git repository on the box.'}

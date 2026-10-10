@@ -1,6 +1,6 @@
 // A project's approval rules: what runs without asking, what gets a card, what is refused.
 import { useEffect, useState } from 'react';
-import type { Bucket, Project, Rule } from '../shared/contracts.ts';
+import { MODELS, type Bucket, type Project, type Rule } from '../shared/contracts.ts';
 import { api } from './api.ts';
 
 const BUCKETS: { id: Bucket; title: string; help: string }[] = [
@@ -9,7 +9,7 @@ const BUCKETS: { id: Bucket; title: string; help: string }[] = [
   { id: 'allow', title: 'Allow', help: 'Runs without asking.' },
 ];
 
-export function RulesView({ project }: { project: Project }) {
+export function RulesView({ project, onProjectChanged }: { project: Project; onProjectChanged: (p: Project) => void }) {
   const [rules, setRules] = useState<Rule[]>([]);
   const [bucket, setBucket] = useState<Bucket>('allow');
   const [pattern, setPattern] = useState('');
@@ -21,7 +21,33 @@ export function RulesView({ project }: { project: Project }) {
 
   return (
     <div className="rules">
-      <h2>Approval rules · {project.name}</h2>
+      <h2>Project settings · {project.name}</h2>
+
+      <h3>Models</h3>
+      <p className="muted">Defaults for this project's chats. A chat can override either one in its header.</p>
+      <div className="model-defaults">
+        {(['discussModel', 'buildModel'] as const).map(field => (
+          <label key={field}>
+            {field === 'discussModel' ? 'Discuss' : 'Build'}
+            <select
+              value={project[field]}
+              onChange={async e => {
+                setError('');
+                try {
+                  onProjectChanged(await api.projectSettings(project.id, { discussModel: project.discussModel, buildModel: project.buildModel, [field]: e.target.value }));
+                } catch (err) {
+                  setError((err as Error).message);
+                }
+              }}
+            >
+              {MODELS.map(m => <option key={m.id} value={m.id}>{m.label}</option>)}
+              {!MODELS.some(m => m.id === project[field]) && <option value={project[field]}>{project[field]}</option>}
+            </select>
+          </label>
+        ))}
+      </div>
+
+      <h3>Approval rules</h3>
       <p className="muted">
         Same syntax as Claude Code: <code>Read</code>, <code>Bash(npm test:*)</code>, <code>Bash(git push:*)</code>,{' '}
         <code>WebFetch(domain:example.com)</code>, <code>Edit(.env*)</code>. Deny beats Ask beats Allow. A shell command

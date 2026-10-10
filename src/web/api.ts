@@ -1,6 +1,6 @@
 // Thin typed client for the Flightdeck API. Responses are parsed with the shared contracts.
 import { z } from 'zod';
-import { Chat, Project, Rule, type Decision, type NewRule } from '../shared/contracts.ts';
+import { Chat, Project, Rule, type Decision, type Mode, type NewRule } from '../shared/contracts.ts';
 
 async function call<T>(schema: z.ZodType<T>, method: string, url: string, body?: unknown): Promise<T> {
   const res = await fetch(url, {
@@ -21,7 +21,10 @@ export const api = {
   newChat: (projectId: number) => call(Chat, 'POST', `/api/projects/${projectId}/chats`),
   send: (chatId: number, text: string) => call(Ok, 'POST', `/api/chats/${chatId}/messages`, { text }),
   stop: (chatId: number) => call(Ok, 'POST', `/api/chats/${chatId}/stop`),
-  setModel: (chatId: number, model: string) => call(Ok, 'POST', `/api/chats/${chatId}/model`, { model }),
+  chatSettings: (chatId: number, body: { mode?: Mode; discussModel?: string | null; buildModel?: string | null }) =>
+    call(Chat, 'POST', `/api/chats/${chatId}/settings`, body),
+  projectSettings: (projectId: number, body: { discussModel: string; buildModel: string }) =>
+    call(Project, 'POST', `/api/projects/${projectId}/settings`, body),
   decide: (approvalId: number, d: Decision) => call(Ok, 'POST', `/api/approvals/${approvalId}`, d),
   rules: (projectId: number) => call(z.array(Rule), 'GET', `/api/projects/${projectId}/rules`),
   addRule: (projectId: number, r: NewRule) => call(Rule, 'POST', `/api/projects/${projectId}/rules`, r),

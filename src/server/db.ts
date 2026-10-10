@@ -10,6 +10,8 @@ export const projects = sqliteTable('projects', {
   id: integer('id').primaryKey({ autoIncrement: true }),
   name: text('name').notNull(),
   path: text('path').notNull().unique(),
+  discussModel: text('discuss_model').notNull(),
+  buildModel: text('build_model').notNull(),
   createdAt: text('created_at').notNull(),
 });
 
@@ -27,7 +29,9 @@ export const chats = sqliteTable('chats', {
   title: text('title').notNull(),
   sessionId: text('session_id').notNull().unique(),
   started: integer('started', { mode: 'boolean' }).notNull().default(false), // first turn sent?
-  model: text('model').notNull(),
+  mode: text('mode', { enum: ['discuss', 'build'] }).notNull(),
+  discussModel: text('discuss_model'), // null = the project's default
+  buildModel: text('build_model'), // null = the project's default
   createdAt: text('created_at').notNull(),
 });
 
@@ -64,14 +68,14 @@ sqlite.pragma('journal_mode = WAL');
 sqlite.exec(`
   CREATE TABLE IF NOT EXISTS projects (
     id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, path TEXT NOT NULL UNIQUE,
-    created_at TEXT NOT NULL);
+    discuss_model TEXT NOT NULL, build_model TEXT NOT NULL, created_at TEXT NOT NULL);
   CREATE TABLE IF NOT EXISTS rules (
     id INTEGER PRIMARY KEY AUTOINCREMENT, project_id INTEGER NOT NULL, bucket TEXT NOT NULL,
     pattern TEXT NOT NULL, reason TEXT);
   CREATE TABLE IF NOT EXISTS chats (
     id INTEGER PRIMARY KEY AUTOINCREMENT, project_id INTEGER NOT NULL, title TEXT NOT NULL,
-    session_id TEXT NOT NULL UNIQUE, started INTEGER NOT NULL DEFAULT 0, model TEXT NOT NULL,
-    created_at TEXT NOT NULL);
+    session_id TEXT NOT NULL UNIQUE, started INTEGER NOT NULL DEFAULT 0, mode TEXT NOT NULL,
+    discuss_model TEXT, build_model TEXT, created_at TEXT NOT NULL);
   CREATE TABLE IF NOT EXISTS runs (
     id INTEGER PRIMARY KEY AUTOINCREMENT, chat_id INTEGER NOT NULL, status TEXT NOT NULL,
     detail TEXT, head_before TEXT, head_after TEXT, started_at TEXT NOT NULL, ended_at TEXT);
@@ -80,6 +84,19 @@ sqlite.exec(`
     tool_input TEXT NOT NULL, decision TEXT NOT NULL, decided_by TEXT, rule TEXT, reason TEXT,
     created_at TEXT NOT NULL, decided_at TEXT);
 `);
+
+// Columns added after the first build (2026-10-10): bring an older database up to date.
+const columns = (table: string) =>
+  new Set((sqlite.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[]).map(c => c.name));
+const addColumn = (table: string, ddl: string) => {
+  if (!columns(table).has(ddl.split(' ')[0]!)) sqlite.exec(`ALTER TABLE ${table} ADD COLUMN ${ddl}`);
+};
+addColumn('projects', `discuss_model TEXT NOT NULL DEFAULT '${config.defaultModel}'`);
+addColumn('projects', `build_model TEXT NOT NULL DEFAULT '${config.defaultModel}'`);
+addColumn('chats', `mode TEXT NOT NULL DEFAULT 'discuss'`);
+addColumn('chats', 'discuss_model TEXT');
+addColumn('chats', 'build_model TEXT');
+if (columns('chats').has('model')) sqlite.exec('ALTER TABLE chats DROP COLUMN model'); // superseded by per-mode models
 
 // A run left 'running' by a crash or restart can never finish; close it out on boot.
 sqlite

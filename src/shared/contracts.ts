@@ -29,18 +29,30 @@ export const Project = z.object({
   id: z.number(),
   name: z.string(),
   path: z.string(),
+  discussModel: z.string(), // the project's default for Discuss turns
+  buildModel: z.string(), // …and for Build turns
   createdAt: z.string(),
 });
 export type Project = z.infer<typeof Project>;
 
 export const NewProject = z.object({ name: z.string().min(1), path: z.string().min(1) });
+export const ProjectSettings = z.object({ discussModel: z.string().min(1), buildModel: z.string().min(1) });
+
+// Discuss: read, analyze, propose — edits are refused. Build: may change code (takes the edit lock).
+export const Mode = z.enum(['discuss', 'build']);
+export type Mode = z.infer<typeof Mode>;
 
 export const Chat = z.object({
   id: z.number(),
   projectId: z.number(),
   title: z.string(),
   sessionId: z.string(),
-  model: z.string(),
+  mode: Mode,
+  // Effective models (the chat's override, else the project's default) and whether overridden.
+  discussModel: z.string(),
+  buildModel: z.string(),
+  discussModelOverridden: z.boolean(),
+  buildModelOverridden: z.boolean(),
   createdAt: z.string(),
   running: z.boolean(),
   holdsEditLock: z.boolean(),
@@ -56,7 +68,12 @@ export const MODELS = [
 ] as const;
 
 export const SendMessage = z.object({ text: z.string().min(1) });
-export const SetModel = z.object({ model: z.string().min(1) });
+// Change a chat's mode and/or its model for a mode. `null` clears an override (back to the project default).
+export const ChatSettings = z.object({
+  mode: Mode.optional(),
+  discussModel: z.string().min(1).nullable().optional(),
+  buildModel: z.string().min(1).nullable().optional(),
+});
 
 export const Decision = z.object({
   decision: z.enum(['allow', 'deny']),
@@ -97,7 +114,8 @@ export type ClaudeEvent = z.infer<typeof ClaudeEvent> & Record<string, unknown>;
 const base = { at: z.string(), runId: z.number() };
 
 export const FeedItem = z.discriminatedUnion('kind', [
-  z.object({ kind: z.literal('user'), ...base, text: z.string() }),
+  // mode/model: what this turn ran with, so the history shows it.
+  z.object({ kind: z.literal('user'), ...base, text: z.string(), mode: Mode.optional(), model: z.string().optional() }),
   z.object({ kind: z.literal('claude'), ...base, event: ClaudeEvent }),
   z.object({
     kind: z.literal('run'),
@@ -113,7 +131,7 @@ export const FeedItem = z.discriminatedUnion('kind', [
     toolInput: z.record(z.string(), z.unknown()),
     toolUseId: z.string().optional(),
     state: z.enum(['pending', 'allowed', 'denied']),
-    decidedBy: z.enum(['user', 'rule', 'timeout', 'lock']).optional(),
+    decidedBy: z.enum(['user', 'rule', 'timeout', 'lock', 'mode']).optional(),
     rule: z.string().optional(),
     reason: z.string().optional(),
     suggestedPattern: z.string().optional(),
