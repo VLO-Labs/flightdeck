@@ -36,3 +36,8 @@ with the box. Tests: `npm test`.
   5.5 for both, chat overrides). Verified: Discuss refused the edit and proposed it; switching to
   Build in the same session made it from "go ahead". Confirmed chats share Claude Code's
   per-project memory.
+- **2026-10-10** — Phase 1b built: maps (architecture / data model / flows) generated from code by
+  a read-only agent with structured output, validated, stored in `.flightdeck/`, drawn with React
+  Flow + ELK, drill-down, change detection, read-only file viewer. Flightdeck's own maps are
+  committed in `.flightdeck/`. Hardened the rules engine on the way: output redirection is never
+  covered by an allow rule.

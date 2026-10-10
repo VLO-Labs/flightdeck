@@ -240,6 +240,27 @@ request or job runs through the system).
   covers have changed since, the map shows a stale badge. A run that changed code ends by
   marking the map stale; refresh is one click.
 
+### As built (2026-10-10)
+- **Generation** = a fresh `claude -p` session in the project folder on the project's **Discuss
+  model**, held to the map schema with **`--json-schema`** (the result arrives as
+  `result.structured_output`; the CLI needs a draft-07 schema — Zod's default 2020-12 header is
+  rejected). It gets **its own hook** (`/hook/map`) that allows only reading, searching and git
+  inspection and refuses everything else without cards — because without a Flightdeck hook the
+  box's global allow rules (`sudo systemctl *`, …) would apply — plus `--disallowedTools` for
+  edits and the web. Flightdeck, not the agent, writes `.flightdeck/<view>.json`.
+- **Schema is flat**: nodes carry a `parent` id instead of nesting (recursive JSON Schema is
+  fragile for structured output). Edges may join nodes at any depth; the viewer lifts each edge
+  to the visible ancestors of its ends.
+- **Validation**: duplicate ids, unknown parents and parent cycles reject the map; file paths that
+  don't exist and edges to unknown nodes are dropped with a warning shown on the map.
+- **Change detection**: `git diff --name-only <map commit>` plus untracked files (excluding
+  `.flightdeck/`), matched against node files (a directory covers everything under it); stale
+  nodes and their ancestors are marked. If the map's commit no longer exists, every node is stale.
+- **File viewer**: read-only, resolved with `realpath` and refused outside the project or inside
+  `.git`; directories list git-known files.
+- **First real run** — Flightdeck mapping itself on Opus 5.5: architecture 23 nodes in 50 s,
+  data model and flows about a minute each, zero dropped references, and accurate on review.
+
 ## 7. Data
 
 SQLite at `/data/flightdeck/flightdeck.db` (WAL):
@@ -300,7 +321,7 @@ and pushes long waits into background tasks.
 activity lines, approval cards, per-project approval rules, edit lock, stop, reopen. Usable on its own as a browser front
 end to Claude Code.
 
-**Phase 1b — maps.** Generation, schema validation, the three views, drill-down, stale badges,
+**Phase 1b — maps. BUILT 2026-10-10.** Generation, schema validation, the three views, drill-down, stale badges,
 read-only file viewing.
 
 **Phase 1c — maps ↔ chat.** Selecting nodes as chat context; nodes lighting up as the agent
