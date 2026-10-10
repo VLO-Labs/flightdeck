@@ -254,9 +254,25 @@ database small for life, and reopening a chat is a replay of that file. (Built p
 than the per-run files first planned: one file per chat makes replay a single read.) Backup =
 copy the directory.
 
-**Model per chat.** Each chat has a model (picker in the chat header, applies from the next
-message, passed as `--model`). New chats default to **Opus 5.5** (`claude-opus-5-5`);
-`FLIGHTDECK_MODEL` overrides the default. The box's global Claude Code settings are untouched.
+**Discuss / Build modes and their models (built 2026-10-10).** Each chat is in one of two modes,
+switched in its header between turns:
+- **Discuss** — read, analyze, plan. Edits are refused **in the hook** (`decidedBy: mode`), and
+  the agent is told up front via `--append-system-prompt`, so it proposes instead of trying.
+  Claude Code's own plan mode was not used: in headless runs its `ExitPlanMode` step would need
+  an approval of its own.
+- **Build** — may change code, and so takes the project's edit lock.
+
+Both run in the **same session**, so flipping to Build keeps everything discussed ("go ahead"
+is enough). Each mode has a model: **project defaults are Opus 5.5 for both** (`claude-opus-5-5`,
+set in Project settings; `FLIGHTDECK_MODEL` changes the default for new projects), and a chat
+can override either. Passed as `--model` per turn; every user turn records the mode and model
+it ran with. New chats start in Discuss. The box's global Claude Code settings are untouched.
+
+**Memory shared across chats (already there, via Claude Code).** Every chat runs in the project's
+folder, so each turn loads the repo's `CLAUDE.md` and Claude Code's **auto-memory for that path**
+(`~/.claude/projects/<path>/memory/`, reported in `init.memory_paths`). Something one chat saves
+to memory, every other chat in the project — and terminal sessions on the box in that folder —
+sees from its next turn. Conversations themselves stay per chat.
 
 ## 8. Build phases
 

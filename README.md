@@ -32,3 +32,7 @@ with the box. Tests: `npm test`.
   rules, edit lock, stop, replay, model per chat (default Opus 5.5). Verified end to end on the
   box: Opus 5.5 on the subscription (`apiKeySource: none`), card → allow + "always allow" rule,
   deny with reason, edit lock refusing a second chat's writes, stop with a card open.
+- **2026-10-10** — Discuss / Build modes per chat, with a model per mode (project defaults Opus
+  5.5 for both, chat overrides). Verified: Discuss refused the edit and proposed it; switching to
+  Build in the same session made it from "go ahead". Confirmed chats share Claude Code's
+  per-project memory.
