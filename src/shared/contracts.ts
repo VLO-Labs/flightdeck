@@ -29,6 +29,7 @@ export const Project = z.object({
   id: z.number(),
   name: z.string(),
   path: z.string(),
+  realPath: z.string(), // path with symlinks resolved — what Claude Code reports in tool calls
   discussModel: z.string(), // the project's default for Discuss turns
   buildModel: z.string(), // …and for Build turns
   createdAt: z.string(),
@@ -67,7 +68,9 @@ export const MODELS = [
   { id: 'claude-fable-5-1', label: 'Fable 5.1' },
 ] as const;
 
-export const SendMessage = z.object({ text: z.string().min(1) });
+// A map node attached to a message as context (Phase 1c). `view` is a MapViewId, checked server-side.
+export const NodeContext = z.object({ view: z.string(), nodeId: z.string() });
+export const SendMessage = z.object({ text: z.string().min(1), context: z.array(NodeContext).max(20).optional() });
 // Change a chat's mode and/or its model for a mode. `null` clears an override (back to the project default).
 export const ChatSettings = z.object({
   mode: Mode.optional(),
@@ -115,7 +118,10 @@ const base = { at: z.string(), runId: z.number() };
 
 export const FeedItem = z.discriminatedUnion('kind', [
   // mode/model: what this turn ran with, so the history shows it.
-  z.object({ kind: z.literal('user'), ...base, text: z.string(), mode: Mode.optional(), model: z.string().optional() }),
+  z.object({
+    kind: z.literal('user'), ...base, text: z.string(), mode: Mode.optional(), model: z.string().optional(),
+    context: z.array(z.object({ view: z.string(), nodeId: z.string(), label: z.string() })).optional(),
+  }),
   z.object({ kind: z.literal('claude'), ...base, event: ClaudeEvent }),
   z.object({
     kind: z.literal('run'),

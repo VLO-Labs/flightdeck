@@ -77,7 +77,18 @@ function childEnv(): NodeJS.ProcessEnv {
   return env;
 }
 
-export function startTurn(chatId: number, text: string): { ok: true } | { ok: false; error: string } {
+type ContextNode = { view: string; nodeId: string; label: string; kind: string; summary: string; files: string[] };
+
+// The block the agent sees above the user's message for each attached map node — built from the
+// map file on disk, so the UI can only point at nodes, never inject text.
+function contextBlock(nodes: ContextNode[]): string {
+  if (nodes.length === 0) return '';
+  const lines = nodes.map(n =>
+    `- ${n.label} (${n.kind}, ${n.view} view): ${n.summary}\n  files: ${n.files.join(', ') || '(none recorded)'}`);
+  return `[Flightdeck: the user attached these parts of the project map to this message]\n${lines.join('\n')}\n\n`;
+}
+
+export function startTurn(chatId: number, text: string, context: ContextNode[] = []): { ok: true } | { ok: false; error: string } {
   if (active.has(chatId)) return { ok: false, error: 'this chat is already running' };
   const chat = db.select().from(chats).where(eq(chats.id, chatId)).get();
   if (!chat) return { ok: false, error: 'no such chat' };
@@ -93,7 +104,7 @@ export function startTurn(chatId: number, text: string): { ok: true } | { ok: fa
     .get();
 
   const args = [
-    '-p', text,
+    '-p', contextBlock(context) + text,
     chat.started ? '--resume' : '--session-id', chat.sessionId,
     '--output-format', 'stream-json', '--verbose', '--include-partial-messages',
     '--settings', hookSettings(),
@@ -107,7 +118,10 @@ export function startTurn(chatId: number, text: string): { ok: true } | { ok: fa
   active.set(chatId, a);
   if (!chat.started) db.update(chats).set({ started: true }).where(eq(chats.id, chatId)).run();
 
-  feed.append(chatId, { kind: 'user', at: now(), runId: run.id, text, mode, model });
+  feed.append(chatId, {
+    kind: 'user', at: now(), runId: run.id, text, mode, model,
+    context: context.length ? context.map(c => ({ view: c.view, nodeId: c.nodeId, label: c.label })) : undefined,
+  });
   feed.append(chatId, { kind: 'run', at: now(), runId: run.id, status: 'started' });
 
   let resultSeen = false;

@@ -189,6 +189,32 @@ pre.code { margin: 0; background: none; padding: 0; white-space: pre; word-break
 .code-line { display: flex; }
 .code-line .ln { color: var(--muted); width: 4em; flex: none; text-align: right; padding-right: 12px; user-select: none; }
 
+.chat-split { display: flex; height: 100%; min-width: 0; }
+.chat-split > .chat { flex: 1; min-width: 0; }
+.chat-map { width: 45%; min-width: 320px; border-left: 1px solid var(--line); display: flex; flex-direction: column; background: var(--bg); }
+.chat-map-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 8px 10px; border-bottom: 1px solid var(--line); background: var(--panel); flex-wrap: wrap; }
+.chat-map-legend { font-size: 12px; }
+.chat-map-canvas { flex: 1; position: relative; min-height: 0; }
+.chat-map-canvas .empty { position: absolute; inset: 0; padding: 16px; text-align: center; }
+.chat-map-foot { font-size: 11.5px; padding: 4px 10px; border-top: 1px solid var(--line); }
+button.ghost { background: none; color: var(--accent); border: 1px solid var(--line); }
+
+.chips { display: flex; gap: 4px; flex-wrap: wrap; margin-bottom: 4px; }
+.composer-chips { width: 100%; margin: 0; }
+.chip {
+  display: inline-flex; align-items: center; gap: 4px; font-size: 12px; padding: 1px 8px;
+  border-radius: 10px; background: var(--card); border: 1px solid var(--card-line);
+}
+.chip-x { background: none; color: var(--muted); padding: 0 2px; line-height: 1; }
+
+.map-node.in-context { box-shadow: 0 0 0 2px var(--card-line); background: var(--card); }
+.map-node.heat-read { border-color: var(--accent); box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 45%, transparent); }
+.map-node.heat-edit { border-color: var(--warn); box-shadow: 0 0 0 3px color-mix(in srgb, var(--warn) 55%, transparent); }
+.heat-tag { font-size: 11px; }
+.heat-tag.read { color: var(--accent); }
+.heat-tag.edit { color: var(--warn); }
+.panel-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+
 .rules { padding: 20px; overflow-y: auto; height: 100%; max-width: 900px; }
 .rules h2 { margin-top: 0; }
 .rule-form { display: flex; gap: 8px; flex-wrap: wrap; margin: 12px 0; }
@@ -200,6 +226,10 @@ pre.code { margin: 0; background: none; padding: 0; white-space: pre; word-break
 .rule code { min-width: 220px; }
 .rule .muted { flex: 1; }
 
+@media (max-width: 1000px) {
+  .chat-split { position: relative; }
+  .chat-map { position: absolute; right: 0; top: 0; bottom: 0; width: min(92vw, 520px); z-index: 10; box-shadow: -4px 0 16px rgba(0,0,0,.15); }
+}
 @media (max-width: 700px) {
   .map-panel { position: absolute; right: 0; top: 0; bottom: 0; width: min(320px, 90vw); z-index: 5; }
   .map-body { position: relative; }

@@ -3,7 +3,7 @@ import type { Chat, Project } from '../shared/contracts.ts';
 import { api } from './api.ts';
 import { ChatView } from './ChatView.tsx';
 import { RulesView } from './RulesView.tsx';
-import { MapView } from './MapView.tsx';
+import { MapView, type NodeRef } from './MapView.tsx';
 
 type View = { kind: 'chat'; chatId: number } | { kind: 'rules' } | { kind: 'map' } | { kind: 'none' };
 
@@ -14,6 +14,8 @@ export function App() {
   const [view, setView] = useState<View>({ kind: 'none' });
   const [adding, setAdding] = useState(false);
   const [error, setError] = useState('');
+  // Nodes handed from the Map screen to a freshly created chat, attached to its first message.
+  const [handoff, setHandoff] = useState<{ chatId: number; nodes: NodeRef[] } | null>(null);
 
   useEffect(() => {
     api.projects().then(ps => {
@@ -107,12 +109,30 @@ export function App() {
 
       <main className="main">
         {view.kind === 'chat' && chat && project && (
-          <ChatView key={chat.id} chat={chat} project={project} onChanged={refreshChats} />
+          <ChatView
+            key={chat.id} chat={chat} project={project} onChanged={refreshChats}
+            initialContext={handoff?.chatId === chat.id ? handoff.nodes : undefined}
+          />
         )}
         {view.kind === 'rules' && project && (
           <RulesView key={project.id} project={project} onProjectChanged={p => setProjects(ps => ps.map(x => (x.id === p.id ? p : x)))} />
         )}
-        {view.kind === 'map' && project && <MapView key={project.id} project={project} />}
+        {view.kind === 'map' && project && (
+          <MapView
+            key={project.id}
+            project={project}
+            onAskInChat={async nodes => {
+              try {
+                const c = await api.newChat(project.id);
+                setChats(cs => [c, ...cs]);
+                setHandoff({ chatId: c.id, nodes });
+                setView({ kind: 'chat', chatId: c.id });
+              } catch (e) {
+                setError((e as Error).message);
+              }
+            }}
+          />
+        )}
         {view.kind === 'none' && (
           <div className="empty">
             {project ? 'Open the map, a chat, or start a new chat.' : 'Add a project: a git repository on the box.'}

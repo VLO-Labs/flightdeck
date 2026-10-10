@@ -4,12 +4,12 @@ import { serveStatic } from '@hono/node-server/serve-static';
 import { Hono } from 'hono';
 import { streamSSE } from 'hono/streaming';
 import { randomUUID } from 'node:crypto';
-import { existsSync, statSync } from 'node:fs';
+import { existsSync, realpathSync, statSync } from 'node:fs';
 import { basename, isAbsolute } from 'node:path';
 import { and, desc, eq } from 'drizzle-orm';
 import {
   ChatSettings, Decision, HookPayload, MapViewId, NewProject, NewRule, ProjectSettings, SendMessage,
-  type Chat, type MapResponse,
+  type Chat, type MapResponse, type Project,
 } from '../shared/contracts.ts';
 import { config } from './config.ts';
 import { db, chats, projects, rules } from './db.ts';
@@ -45,7 +45,13 @@ app.post('/hook/map', async c => {
 });
 
 // --- Projects -----------------------------------------------------------------------------------
-app.get('/api/projects', c => c.json(db.select().from(projects).all()));
+function toProject(row: typeof projects.$inferSelect): Project {
+  let realPath = row.path;
+  try { realPath = realpathSync(row.path); } catch { /* folder gone; keep the configured path */ }
+  return { ...row, realPath };
+}
+
+app.get('/api/projects', c => c.json(db.select().from(projects).all().map(toProject)));
 
 app.post('/api/projects', async c => {
   const body = NewProject.safeParse(await c.req.json());
@@ -61,14 +67,14 @@ app.post('/api/projects', async c => {
     .values({ name: body.data.name || basename(path), path, discussModel: config.defaultModel, buildModel: config.defaultModel, createdAt: now() })
     .returning().get();
   for (const r of TEMPLATE_RULES) db.insert(rules).values({ ...r, projectId: project.id }).run();
-  return c.json(project);
+  return c.json(toProject(project));
 });
 
 app.post('/api/projects/:id/settings', async c => {
   const body = ProjectSettings.safeParse(await c.req.json());
   if (!body.success) return c.json({ error: 'both models are required' }, 400);
   const row = db.update(projects).set(body.data).where(eq(projects.id, Number(c.req.param('id')))).returning().get();
-  return row ? c.json(row) : c.json({ error: 'no such project' }, 404);
+  return row ? c.json(toProject(row)) : c.json({ error: 'no such project' }, 404);
 });
 
 // --- Maps ---------------------------------------------------------------------------------------
@@ -163,7 +169,16 @@ app.post('/api/chats/:id/messages', async c => {
     const title = body.data.text.replace(/\s+/g, ' ').trim().slice(0, 60);
     db.update(chats).set({ title }).where(eq(chats.id, id)).run();
   }
-  const r = startTurn(id, body.data.text);
+  // Resolve attached map nodes from the map files on disk.
+  const context = [];
+  const project = chat && db.select().from(projects).where(eq(projects.id, chat.projectId)).get();
+  for (const ref of body.data.context ?? []) {
+    const view = MapViewId.safeParse(ref.view);
+    const node = project && view.success ? readMap(project.path, view.data)?.nodes.find(n => n.id === ref.nodeId) : undefined;
+    if (!node || !view.success) return c.json({ error: `map node ${ref.view}/${ref.nodeId} not found — refresh the map` }, 400);
+    context.push({ view: view.data, nodeId: node.id, label: node.label, kind: node.kind, summary: node.summary, files: node.files });
+  }
+  const r = startTurn(id, body.data.text, context);
   return r.ok ? c.json({ ok: true }) : c.json({ error: r.error }, 409);
 });
 

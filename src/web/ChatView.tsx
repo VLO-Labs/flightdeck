@@ -1,24 +1,34 @@
-// One chat: the live feed (replayed, then streamed), approval cards, and the composer.
+// One chat: the live feed (replayed, then streamed), approval cards, the composer, and the map
+// pane — attach nodes as context, watch the agent's reads and edits light the map up.
 import { useEffect, useMemo, useRef, useState } from 'react';
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { FeedItem, MODELS, type Chat, type Project } from '../shared/contracts.ts';
+import { FeedItem, MAP_VIEWS, MODELS, type Chat, type MapViewId, type Project } from '../shared/contracts.ts';
 import { api } from './api.ts';
+import { Crumbs, MapCanvas, nodesForFile, type Heat } from './MapCanvas.tsx';
+import { useMap, type NodeRef } from './MapView.tsx';
 
 type Approval = Extract<FeedItem, { kind: 'approval' }>;
 type Activity = {
-  kind: 'activity'; key: string; toolUseId: string; name: string; input: Record<string, unknown>;
+  kind: 'activity'; key: string; runId: number; toolUseId: string; name: string; input: Record<string, unknown>;
   result?: { text: string; isError: boolean }; approval?: Approval;
 };
 type Block =
-  | { kind: 'user'; key: string; text: string; tag?: string }
+  | { kind: 'user'; key: string; text: string; tag?: string; context?: string[] }
   | { kind: 'text'; key: string; text: string }
   | Activity
   | { kind: 'note'; key: string; text: string; tone: 'muted' | 'bad' | 'good' }
   | { kind: 'approval'; key: string; approval: Approval };
 
 type RateLimit = { status?: string; resetsAt?: number; rateLimitType?: string };
-type Derived = { blocks: Block[]; partial: string; running: boolean; rateLimit?: RateLimit; model?: string };
+// touched: repo-relative paths the latest run read or edited — what lights up the map.
+type Derived = {
+  blocks: Block[]; partial: string; running: boolean; rateLimit?: RateLimit; model?: string;
+  touched: Map<string, Heat>;
+};
+
+const EDIT_TOOLS = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit']);
+const READ_TOOLS = new Set(['Read', 'Grep', 'Glob', 'LS']);
 
 const str = (v: unknown) => (typeof v === 'string' ? v : JSON.stringify(v));
 
@@ -29,7 +39,7 @@ function toolResultText(content: unknown): string {
 }
 
 // Fold the feed into what the screen shows. Pure: same items → same picture, live or replayed.
-function derive(items: FeedItem[]): Derived {
+function derive(items: FeedItem[], roots: string[]): Derived {
   const blocks: Block[] = [];
   const activities = new Map<string, Activity>();
   const approvals = new Map<number, Approval>();
@@ -38,15 +48,17 @@ function derive(items: FeedItem[]): Derived {
   let running = false;
   let rateLimit: RateLimit | undefined;
   let model: string | undefined;
+  let lastRun = -1;
 
   items.forEach((it, i) => {
     const key = `${i}`;
     if (it.kind === 'user') {
       const label = MODELS.find(m => m.id === it.model)?.label ?? it.model;
       const tag = it.mode ? `${it.mode === 'build' ? 'Build' : 'Discuss'}${label ? ` · ${label}` : ''}` : undefined;
-      blocks.push({ kind: 'user', key, text: it.text, tag });
+      blocks.push({ kind: 'user', key, text: it.text, tag, context: it.context?.map(c => c.label) });
     } else if (it.kind === 'run') {
       running = it.status === 'started';
+      if (it.status === 'started') lastRun = it.runId;
       partial = '';
       if (it.status === 'failed') blocks.push({ kind: 'note', key, tone: 'bad', text: `Run failed${it.detail ? `: ${it.detail}` : ''}` });
       if (it.status === 'stopped') blocks.push({ kind: 'note', key, tone: 'muted', text: `Stopped${it.detail ? ` (${it.detail})` : ''}` });
@@ -77,7 +89,7 @@ function derive(items: FeedItem[]): Derived {
             blocks.push({ kind: 'text', key: `${key}-${c.id ?? blocks.length}`, text: c.text });
             partial = '';
           } else if (c.type === 'tool_use') {
-            const a: Activity = { kind: 'activity', key: `${key}-${c.id}`, toolUseId: c.id, name: c.name, input: c.input ?? {} };
+            const a: Activity = { kind: 'activity', key: `${key}-${c.id}`, runId: it.runId, toolUseId: c.id, name: c.name, input: c.input ?? {} };
             // An approval can arrive before its tool_use in rare orderings; attach it either way.
             for (const ap of approvals.values()) if (ap.toolUseId === c.id) a.approval = ap;
             activities.set(c.id, a);
@@ -106,10 +118,33 @@ function derive(items: FeedItem[]): Derived {
       }
     }
   });
-  return { blocks, partial, running, rateLimit, model };
+  // What the latest run touched. An edit counts once it succeeded (or while it is still in
+  // flight); a refused or failed edit lights nothing.
+  const touched = new Map<string, Heat>();
+  const toRel = (p: unknown) => {
+    if (typeof p !== 'string') return undefined;
+    for (const r of roots) if (p === r) return ''; else if (p.startsWith(r + '/')) return p.slice(r.length + 1);
+    return undefined;
+  };
+  for (const b of blocks) {
+    if (b.kind !== 'activity' || b.runId !== lastRun) continue;
+    const rel = toRel(b.input.file_path ?? b.input.notebook_path ?? b.input.path);
+    if (rel === undefined) continue;
+    if (EDIT_TOOLS.has(b.name)) {
+      const ok = b.approval?.state !== 'denied' && !(b.result?.isError);
+      if (ok) touched.set(rel, 'edit');
+    } else if (READ_TOOLS.has(b.name) && touched.get(rel) !== 'edit') {
+      touched.set(rel, 'read');
+    }
+  }
+  return { blocks, partial, running, rateLimit, model, touched };
 }
 
-export function ChatView({ chat, project, onChanged }: { chat: Chat; project: Project; onChanged: () => void }) {
+export function ChatView({ chat, project, onChanged, initialContext }: {
+  chat: Chat; project: Project; onChanged: () => void; initialContext?: NodeRef[];
+}) {
+  const [ctx, setCtx] = useState<NodeRef[]>(initialContext ?? []);
+  const [showMap, setShowMap] = useState(() => storageGet('fd.chatmap') !== '0');
   const [items, setItems] = useState<FeedItem[]>([]);
   const [connected, setConnected] = useState(false);
   const [draft, setDraft] = useState('');
@@ -146,7 +181,7 @@ export function ChatView({ chat, project, onChanged }: { chat: Chat; project: Pr
     return () => es.close();
   }, [chat.id, onChanged]);
 
-  const d = useMemo(() => derive(items), [items]);
+  const d = useMemo(() => derive(items, [project.realPath, project.path]), [items, project.realPath, project.path]);
 
   useEffect(() => {
     if (stick.current) bottom.current?.scrollIntoView({ block: 'end' });
@@ -157,17 +192,25 @@ export function ChatView({ chat, project, onChanged }: { chat: Chat; project: Pr
     if (!text || d.running) return;
     setError('');
     try {
-      await api.send(chat.id, text);
+      await api.send(chat.id, text, ctx.map(c => ({ view: c.view, nodeId: c.nodeId })));
       setDraft('');
+      setCtx([]);
       stick.current = true;
     } catch (e) {
       setError((e as Error).message);
     }
   };
 
-  const rel = (p: unknown) => (typeof p === 'string' && p.startsWith(project.path + '/') ? p.slice(project.path.length + 1) : str(p));
+  const rel = (p: unknown) => {
+    if (typeof p !== 'string') return str(p);
+    for (const r of [project.realPath, project.path]) if (p.startsWith(r + '/')) return p.slice(r.length + 1);
+    return p;
+  };
+  const toggleCtx = (n: NodeRef) =>
+    setCtx(cs => (cs.some(c => c.view === n.view && c.nodeId === n.nodeId) ? cs.filter(c => !(c.view === n.view && c.nodeId === n.nodeId)) : [...cs, n]));
 
   return (
+    <div className="chat-split">
     <div className="chat">
       <header className="chat-header">
         <div className="chat-name">{chat.title}</div>
@@ -194,6 +237,12 @@ export function ChatView({ chat, project, onChanged }: { chat: Chat; project: Pr
           }} />
           {d.rateLimit && <RateLimitBadge r={d.rateLimit} />}
           {!connected && <span className="badge bad">reconnecting…</span>}
+          <button
+            className={`small ${showMap ? '' : 'ghost'}`}
+            onClick={() => setShowMap(v => { storageSet('fd.chatmap', v ? '0' : '1'); return !v; })}
+          >
+            {showMap ? 'Hide map' : 'Map'}
+          </button>
         </div>
       </header>
 
@@ -209,6 +258,7 @@ export function ChatView({ chat, project, onChanged }: { chat: Chat; project: Pr
             case 'user':
               return (
                 <div key={b.key} className="msg user">
+                  {b.context && <div className="chips">{b.context.map(l => <span key={l} className="chip">{l}</span>)}</div>}
                   {b.text}
                   {b.tag && <div className="msg-tag">{b.tag}</div>}
                 </div>
@@ -230,6 +280,16 @@ export function ChatView({ chat, project, onChanged }: { chat: Chat; project: Pr
 
       <footer className="composer">
         {error && <div className="error">{error}</div>}
+        {ctx.length > 0 && (
+          <div className="chips composer-chips">
+            {ctx.map(c => (
+              <span key={`${c.view}:${c.nodeId}`} className="chip">
+                {c.label}
+                <button className="chip-x" title="Remove" onClick={() => toggleCtx(c)}>×</button>
+              </span>
+            ))}
+          </div>
+        )}
         <textarea
           value={draft}
           placeholder={d.running ? 'Claude is working — stop it or wait for it to finish' : 'Message Claude Code (Enter to send, Shift+Enter for a new line)'}
@@ -247,7 +307,66 @@ export function ChatView({ chat, project, onChanged }: { chat: Chat; project: Pr
           : <button onClick={send} disabled={!draft.trim()}>Send</button>}
       </footer>
     </div>
+    {showMap && <ChatMapPane project={project} ctx={ctx} onToggle={toggleCtx} touched={d.touched} live={d.running} />}
+    </div>
   );
+}
+
+// The map beside the chat: click a node to attach it to the next message; nodes light up as the
+// latest run reads (blue) or edits (amber) the files behind them.
+function ChatMapPane({ project, ctx, onToggle, touched, live }: {
+  project: Project; ctx: NodeRef[]; onToggle: (n: NodeRef) => void; touched: Map<string, Heat>; live: boolean;
+}) {
+  const [view, setView] = useState<MapViewId>('architecture');
+  const { data } = useMap(project.id, view);
+  const [path, setPath] = useState<string[]>([]);
+  useEffect(() => setPath([]), [view]);
+
+  const map = data?.map ?? null;
+  const stale = useMemo(() => new Set(data?.staleNodeIds ?? []), [data]);
+  const inContext = useMemo(() => new Set(ctx.filter(c => c.view === view).map(c => c.nodeId)), [ctx, view]);
+  const heat = useMemo(() => {
+    const out = new Map<string, Heat>();
+    if (!map) return out;
+    for (const [rel, h] of touched) {
+      for (const id of nodesForFile(map, rel)) if (out.get(id) !== 'edit') out.set(id, h);
+    }
+    return out;
+  }, [map, touched]);
+
+  return (
+    <aside className="chat-map">
+      <div className="chat-map-head">
+        <div className="map-tabs">
+          {MAP_VIEWS.map(v => <button key={v.id} className={v.id === view ? 'on' : ''} onClick={() => setView(v.id)}>{v.label}</button>)}
+        </div>
+        <span className="muted chat-map-legend">
+          {touched.size > 0 ? (live ? 'This run: ' : 'Last run: ') : ''}
+          <span className="heat-tag read">read</span> <span className="heat-tag edit">edited</span>
+        </span>
+      </div>
+      {map && <Crumbs map={map} root={project.name} path={path} onPath={setPath} />}
+      <div className="chat-map-canvas">
+        {map
+          ? <MapCanvas
+              map={map} view={view} stale={stale} path={path} onPath={setPath} inContext={inContext} heat={heat}
+              onSelect={id => {
+                const n = id ? map.nodes.find(x => x.id === id) : undefined;
+                if (n) onToggle({ view, nodeId: n.id, label: n.label });
+              }}
+            />
+          : <div className="empty muted">No {view} map yet — make one from the project's Map screen.</div>}
+      </div>
+      <div className="chat-map-foot muted">Click a node to attach it to your message · double-click to open it</div>
+    </aside>
+  );
+}
+
+function storageGet(k: string) {
+  try { return localStorage.getItem(k); } catch { return null; }
+}
+function storageSet(k: string, v: string) {
+  try { localStorage.setItem(k, v); } catch { /* not essential */ }
 }
 
 function summary(name: string, input: Record<string, unknown>, rel: (p: unknown) => string): string {

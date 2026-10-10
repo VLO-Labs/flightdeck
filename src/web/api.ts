@@ -19,7 +19,8 @@ export const api = {
   addProject: (name: string, path: string) => call(Project, 'POST', '/api/projects', { name, path }),
   chats: (projectId: number) => call(z.array(Chat), 'GET', `/api/projects/${projectId}/chats`),
   newChat: (projectId: number) => call(Chat, 'POST', `/api/projects/${projectId}/chats`),
-  send: (chatId: number, text: string) => call(Ok, 'POST', `/api/chats/${chatId}/messages`, { text }),
+  send: (chatId: number, text: string, context?: { view: string; nodeId: string }[]) =>
+    call(Ok, 'POST', `/api/chats/${chatId}/messages`, { text, context: context?.length ? context : undefined }),
   stop: (chatId: number) => call(Ok, 'POST', `/api/chats/${chatId}/stop`),
   chatSettings: (chatId: number, body: { mode?: Mode; discussModel?: string | null; buildModel?: string | null }) =>
     call(Chat, 'POST', `/api/chats/${chatId}/settings`, body),

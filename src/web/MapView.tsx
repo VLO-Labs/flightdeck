@@ -1,130 +1,42 @@
 // The map screen: a project's diagrams, generated from its code. Navigate by drilling into nodes;
-// see what changed since the map was made; open the files behind any node.
+// see what changed since the map was made; open the files behind any node; take a node to a chat.
 import { useEffect, useMemo, useState } from 'react';
-import { ReactFlow, Background, Controls, Handle, Position, type Edge, type Node, type NodeProps } from '@xyflow/react';
-import '@xyflow/react/dist/style.css';
-import ELK from 'elkjs/lib/elk.bundled.js';
-import { MAP_VIEWS, type MapEdge, type MapNode, type MapResponse, type MapViewId, type Project } from '../shared/contracts.ts';
+import { MAP_VIEWS, type MapResponse, type MapViewId, type Project } from '../shared/contracts.ts';
 import { api } from './api.ts';
 import { FileViewer } from './FileViewer.tsx';
+import { Crumbs, MapCanvas } from './MapCanvas.tsx';
 
-const elk = new ELK();
-const W = 240;
-const heightOf = (n: MapNode) => 78 + Math.min(n.fields.length, 12) * 17;
+export type NodeRef = { view: MapViewId; nodeId: string; label: string };
 
-type CardData = { node: MapNode; stale: boolean; childCount: number; selected: boolean };
-
-function NodeCard({ data }: NodeProps<Node<CardData>>) {
-  const { node, stale, childCount, selected } = data;
-  return (
-    <div className={`map-node kind-${node.kind} ${stale ? 'stale' : ''} ${selected ? 'selected' : ''}`} style={{ width: W }}>
-      <Handle type="target" position={Position.Left} />
-      <div className="map-node-head">
-        <span className="map-node-label">{node.label}</span>
-        <span className="map-node-kind">{node.kind}</span>
-      </div>
-      <div className="map-node-summary">{node.summary}</div>
-      {node.fields.length > 0 && (
-        <div className="map-node-fields">
-          {node.fields.slice(0, 12).map(f => (
-            <div key={f.name}><span>{f.name}</span> <span className="muted">{f.type}{f.note ? ` · ${f.note}` : ''}</span></div>
-          ))}
-          {node.fields.length > 12 && <div className="muted">+{node.fields.length - 12} more</div>}
-        </div>
-      )}
-      <div className="map-node-foot">
-        {childCount > 0 && <span>▸ {childCount} inside</span>}
-        {stale && <span className="stale-tag">changed</span>}
-      </div>
-      <Handle type="source" position={Position.Right} />
-    </div>
-  );
-}
-const nodeTypes = { card: NodeCard };
-
-// Edges can join nodes at any depth; show each one between the visible ancestors of its ends.
-function liftEdges(nodes: MapNode[], edges: MapEdge[], level: string | null) {
-  const byId = new Map(nodes.map(n => [n.id, n]));
-  const visibleAncestor = (id: string): string | undefined => {
-    for (let n = byId.get(id); n; n = n.parent ? byId.get(n.parent) : undefined) if (n.parent === level) return n.id;
-    return undefined;
-  };
-  const out = new Map<string, { from: string; to: string; labels: string[] }>();
-  for (const e of edges) {
-    const from = visibleAncestor(e.from);
-    const to = visibleAncestor(e.to);
-    if (!from || !to || from === to) continue;
-    const key = `${from}→${to}`;
-    const cur = out.get(key) ?? { from, to, labels: [] };
-    if (e.label && !cur.labels.includes(e.label)) cur.labels.push(e.label);
-    out.set(key, cur);
-  }
-  return [...out.values()];
-}
-
-export function MapView({ project }: { project: Project }) {
-  const [view, setView] = useState<MapViewId>('architecture');
+// Shared by the Map screen and the chat's map pane: load a view, poll while it generates.
+export function useMap(projectId: number, view: MapViewId) {
   const [data, setData] = useState<MapResponse | null>(null);
-  const [path, setPath] = useState<string[]>([]); // drill-down trail of node ids
-  const [selected, setSelected] = useState<string | null>(null);
-  const [layout, setLayout] = useState<{ nodes: Node<CardData>[]; edges: Edge[] } | null>(null);
-  const [file, setFile] = useState<string | null>(null);
   const [error, setError] = useState('');
-
-  const load = () => api.map(project.id, view).then(setData).catch(e => setError(e.message));
+  const load = () => api.map(projectId, view).then(d => { setData(d); setError(''); }).catch(e => setError(e.message));
   useEffect(() => {
     setData(null);
-    setPath([]);
-    setSelected(null);
     void load();
-  }, [project.id, view]);
-
-  // Poll fast while a generation runs, slowly otherwise (staleness follows edits made elsewhere).
+  }, [projectId, view]);
   const running = data?.job?.status === 'running';
   useEffect(() => {
     const t = setInterval(load, running ? 2000 : 15000);
     return () => clearInterval(t);
-  }, [project.id, view, running]);
+  }, [projectId, view, running]);
+  return { data, error, setError, reload: load };
+}
+
+export function MapView({ project, onAskInChat }: { project: Project; onAskInChat: (nodes: NodeRef[]) => void }) {
+  const [view, setView] = useState<MapViewId>('architecture');
+  const { data, error, setError, reload } = useMap(project.id, view);
+  const [path, setPath] = useState<string[]>([]);
+  const [selected, setSelected] = useState<string | null>(null);
+  const [file, setFile] = useState<string | null>(null);
+
+  useEffect(() => { setPath([]); setSelected(null); }, [project.id, view]);
 
   const map = data?.map ?? null;
-  const level = path.at(-1) ?? null;
+  const running = data?.job?.status === 'running';
   const stale = useMemo(() => new Set(data?.staleNodeIds ?? []), [data]);
-
-  useEffect(() => {
-    if (!map) return setLayout(null);
-    const visible = map.nodes.filter(n => n.parent === level);
-    const lifted = liftEdges(map.nodes, map.edges, level);
-    const childCount = (id: string) => map.nodes.filter(n => n.parent === id).length;
-    let cancelled = false;
-    elk.layout({
-      id: 'root',
-      layoutOptions: {
-        'elk.algorithm': 'layered',
-        'elk.direction': view === 'flows' && level !== null ? 'DOWN' : 'RIGHT',
-        'elk.spacing.nodeNode': '40',
-        'elk.layered.spacing.nodeNodeBetweenLayers': '80',
-        'elk.edgeRouting': 'SPLINES',
-      },
-      children: visible.map(n => ({ id: n.id, width: W, height: heightOf(n) })),
-      edges: lifted.map((e, i) => ({ id: `e${i}`, sources: [e.from], targets: [e.to] })),
-    }).then(g => {
-      if (cancelled) return;
-      const pos = new Map((g.children ?? []).map(c => [c.id, { x: c.x ?? 0, y: c.y ?? 0 }]));
-      setLayout({
-        nodes: visible.map(n => ({
-          id: n.id, type: 'card', position: pos.get(n.id) ?? { x: 0, y: 0 },
-          data: { node: n, stale: stale.has(n.id), childCount: childCount(n.id), selected: selected === n.id },
-        })),
-        edges: lifted.map((e, i) => ({
-          id: `e${i}`, source: e.from, target: e.to,
-          label: e.labels.length > 1 ? `${e.labels[0]} +${e.labels.length - 1}` : e.labels[0],
-          animated: stale.has(e.from) || stale.has(e.to),
-        })),
-      });
-    });
-    return () => { cancelled = true; };
-  }, [map, level, view, stale, selected]);
-
   const byId = useMemo(() => new Map((map?.nodes ?? []).map(n => [n.id, n])), [map]);
   const sel = selected ? byId.get(selected) : undefined;
   const hasChildren = (id: string) => (map?.nodes ?? []).some(n => n.parent === id);
@@ -133,7 +45,7 @@ export function MapView({ project }: { project: Project }) {
     setError('');
     try {
       await api.generateMap(project.id, view);
-      await load();
+      await reload();
     } catch (e) {
       setError((e as Error).message);
     }
@@ -161,7 +73,7 @@ export function MapView({ project }: { project: Project }) {
             </span>
           )}
           {running
-            ? <button className="stop" onClick={() => api.stopMap(project.id).then(load)}>Stop</button>
+            ? <button className="stop" onClick={() => api.stopMap(project.id).then(reload)}>Stop</button>
             : <button onClick={generate}>{map ? 'Refresh map' : 'Map this project'}</button>}
         </div>
       </header>
@@ -177,15 +89,7 @@ export function MapView({ project }: { project: Project }) {
         <div className="job-line running">Mapping the {job.view} view… ({job.steps} steps)</div>
       )}
       {error && <div className="error job-line">{error}</div>}
-
-      {path.length > 0 && (
-        <nav className="crumbs">
-          <button className="link" onClick={() => { setPath([]); setSelected(null); }}>{project.name}</button>
-          {path.map((id, i) => (
-            <span key={id}> / <button className="link" onClick={() => { setPath(path.slice(0, i + 1)); setSelected(null); }}>{byId.get(id)?.label ?? id}</button></span>
-          ))}
-        </nav>
-      )}
+      {map && <Crumbs map={map} root={project.name} path={path} onPath={p => { setPath(p); setSelected(null); }} />}
 
       <div className="map-body">
         <div className="map-canvas">
@@ -200,24 +104,8 @@ export function MapView({ project }: { project: Project }) {
               </div>
             </div>
           )}
-          {layout && (
-            <ReactFlow
-              key={`${view}:${level ?? ''}`}
-              nodes={layout.nodes}
-              edges={layout.edges}
-              nodeTypes={nodeTypes}
-              colorMode="system"
-              fitView
-              nodesDraggable={false}
-              nodesConnectable={false}
-              onNodeClick={(_, n) => setSelected(n.id)}
-              onNodeDoubleClick={(_, n) => { if (hasChildren(n.id)) { setPath([...path, n.id]); setSelected(null); } }}
-              onPaneClick={() => setSelected(null)}
-              proOptions={{ hideAttribution: true }}
-            >
-              <Background />
-              <Controls showInteractive={false} />
-            </ReactFlow>
+          {map && (
+            <MapCanvas map={map} view={view} stale={stale} path={path} onPath={setPath} selected={selected} onSelect={setSelected} />
           )}
         </div>
 
@@ -229,9 +117,10 @@ export function MapView({ project }: { project: Project }) {
             </div>
             <p>{sel.summary}</p>
             {stale.has(sel.id) && <p className="warn-text">Files behind this changed since the map was made.</p>}
-            {hasChildren(sel.id) && (
-              <button onClick={() => { setPath([...path, sel.id]); setSelected(null); }}>Open ▸</button>
-            )}
+            <div className="panel-actions">
+              {hasChildren(sel.id) && <button onClick={() => { setPath([...path, sel.id]); setSelected(null); }}>Open ▸</button>}
+              <button onClick={() => onAskInChat([{ view, nodeId: sel.id, label: sel.label }])}>Discuss in a new chat</button>
+            </div>
             {sel.fields.length > 0 && (
               <>
                 <div className="label">Fields</div>
