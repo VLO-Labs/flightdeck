@@ -67,6 +67,8 @@ test('mcp tool-name glob', () => {
 test('suggested patterns', () => {
   assert.equal(suggestPattern('Bash', { command: 'npm test -- --watch' }), 'Bash(npm test:*)');
   assert.equal(suggestPattern('Bash', { command: 'ls -la' }), 'Bash(ls:*)');
+  assert.equal(suggestPattern('Bash', { command: 'touch made.txt' }), 'Bash(touch:*)');
+  assert.equal(suggestPattern('Bash', { command: 'cat src/a.ts' }), 'Bash(cat:*)');
   assert.equal(suggestPattern('WebFetch', { url: 'https://a.b.com/x' }), 'WebFetch(domain:a.b.com)');
   assert.equal(suggestPattern('Edit', { file_path: 'x' }), 'Edit');
 });

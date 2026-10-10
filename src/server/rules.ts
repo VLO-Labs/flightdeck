@@ -137,7 +137,10 @@ export function suggestPattern(toolName: string, input: Record<string, unknown>)
   if (toolName === 'Bash') {
     const first = splitCommand(String(input.command ?? ''))[0] ?? '';
     const words = first.split(/\s+/);
-    const head = words[1] && !words[1].startsWith('-') ? `${words[0]} ${words[1]}` : words[0];
+    // Keep a second word only when it looks like a subcommand (`git commit`, `npm test`),
+    // not an argument such as a file name or a flag.
+    const sub = words[1] && /^[a-z][a-z0-9-]*$/.test(words[1]);
+    const head = sub ? `${words[0]} ${words[1]}` : words[0];
     return `Bash(${head}:*)`;
   }
   if (toolName === 'WebFetch') {

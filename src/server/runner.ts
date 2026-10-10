@@ -133,7 +133,10 @@ export function startTurn(chatId: number, text: string): { ok: true } | { ok: fa
     if (a.stopRequested) status = 'stopped';
     else if (failure || !resultSeen) status = 'failed';
     else status = 'finished';
-    const detail = failure ?? (!resultSeen && !a.stopRequested ? `claude exited (${code}) without a result. ${stderr.trim()}`.trim() : undefined);
+    // A stop ends the turn with error_during_execution by design; that's not a failure to report.
+    const detail = a.stopRequested
+      ? undefined
+      : failure ?? (!resultSeen ? `claude exited (${code}) without a result. ${stderr.trim()}`.trim() : undefined);
     db.update(runs)
       .set({ status, detail, endedAt: now(), headAfter: gitHead(project.path) })
       .where(eq(runs.id, run.id))
