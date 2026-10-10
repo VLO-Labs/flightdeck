@@ -178,6 +178,12 @@ export function readMap(projectPath: string, view: MapViewId): StoredMap | null 
 // Generation jobs (one at a time per project)
 // ---------------------------------------------------------------------------------------------
 
+// The CLI's validator doesn't know the 2020-12 meta-schema Zod declares by default.
+function mapJsonSchema() {
+  const { $schema: _drop, ...schema } = z.toJSONSchema(GeneratedMap, { target: 'draft-7' }) as Record<string, unknown>;
+  return schema;
+}
+
 type Job = MapJob & { projectId: number; sessionId?: string; proc?: ChildProcess; stopRequested: boolean };
 const jobs = new Map<number, Job>(); // latest job per project
 
@@ -213,7 +219,7 @@ export function startGeneration(project: { id: number; path: string; discussMode
     '-p', `${COMMON}\n\n${VIEW_PROMPTS[view]}`,
     '--model', project.discussModel,
     '--output-format', 'stream-json', '--verbose',
-    '--json-schema', JSON.stringify(z.toJSONSchema(GeneratedMap)),
+    '--json-schema', JSON.stringify(mapJsonSchema()),
     '--disallowedTools', 'Edit', 'Write', 'MultiEdit', 'NotebookEdit', 'WebFetch', 'WebSearch',
     '--settings', JSON.stringify({
       hooks: { PreToolUse: [{ matcher: '*', hooks: [{
