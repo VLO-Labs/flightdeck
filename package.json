@@ -6,7 +6,7 @@
     "dev:server": "tsx watch src/server/main.ts",
     "dev:web": "vite",
     "build": "tsc --noEmit && vite build",
-    "start": "tsx src/server/main.ts",
+    "start": "node --import tsx src/server/main.ts",
     "typecheck": "tsc --noEmit",
     "test": "tsx --test src/**/*.test.ts"
   },

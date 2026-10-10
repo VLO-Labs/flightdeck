@@ -248,8 +248,15 @@ SQLite at `/data/flightdeck/flightdeck.db` (WAL):
 `runs` (chat, status, started/ended, git HEAD before/after, log path) ·
 `approvals` (run, tool, input, decision, reason, decided_at — the audit trail).
 
-Full event streams go to `/data/flightdeck/runs/<run-id>.jsonl`, not into the DB — keeps the
-database small for life. Backup = copy the directory.
+Each chat's full feed (your messages, every Claude Code event, approval cards and their outcomes,
+run start/end) goes to `/data/flightdeck/chats/<chat-id>.jsonl`, not into the DB — keeps the
+database small for life, and reopening a chat is a replay of that file. (Built per chat rather
+than the per-run files first planned: one file per chat makes replay a single read.) Backup =
+copy the directory.
+
+**Model per chat.** Each chat has a model (picker in the chat header, applies from the next
+message, passed as `--model`). New chats default to **Opus 5.5** (`claude-opus-5-5`);
+`FLIGHTDECK_MODEL` overrides the default. The box's global Claude Code settings are untouched.
 
 ## 8. Build phases
 
@@ -273,7 +280,7 @@ turn but background tasks keep the process alive; the agent's own summary can mi
 action, so the UI shows denials from the stream; Claude Code itself refuses foreground `sleep`
 and pushes long waits into background tasks.
 
-**Phase 1a — chat.** Projects (add by path), several chats per project, live streaming,
+**Phase 1a — chat. BUILT 2026-10-10** (dev instance on the box, see README). Projects (add by path), several chats per project, live streaming,
 activity lines, approval cards, per-project approval rules, edit lock, stop, reopen. Usable on its own as a browser front
 end to Claude Code.
 

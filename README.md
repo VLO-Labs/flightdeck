@@ -7,7 +7,14 @@ where in the system it happens and approve what it wants to run.
 Single user (Hayk), self-hosted on vlolabsdev, driving the **unmodified `claude` CLI on the
 Claude subscription** — never API tokens.
 
-**Status (2026-10-10):** planned, not built. Private repo `VLO-Labs/flightdeck`.
+**Status (2026-10-10):** Phase 1a (chat) built and tested end to end on the box. Private repo
+`VLO-Labs/flightdeck`.
+
+## Run it
+On the box (Node 22): `npm ci && npx vite build && FLIGHTDECK_DATA=/data/flightdeck npm start`
+→ `127.0.0.1:8100`, loopback only. From the Mac: `ssh -L 8100:127.0.0.1:8100 vlolabs@vlolabsdev`,
+then open http://localhost:8100. No systemd unit, tunnel route or SSO yet — a dev instance dies
+with the box. Tests: `npm test`.
 
 | Read | For |
 |------|-----|
@@ -20,3 +27,8 @@ Claude subscription** — never API tokens.
 - **2026-10-10** — Step 0 spike run on the box: hook-held approvals, SIGINT stop, resume and the
   subscription tripwire all confirmed. Corrected the plan: a timed-out approval falls back to
   Claude Code's normal rules (read-only runs, writes refused), not a blanket deny.
+- **2026-10-10** — TypeScript locked; per-project approval rules designed. Phase 1a built:
+  projects, chats on headless `claude -p`, approval cards (http PreToolUse hook), per-project
+  rules, edit lock, stop, replay, model per chat (default Opus 5.5). Verified end to end on the
+  box: Opus 5.5 on the subscription (`apiKeySource: none`), card → allow + "always allow" rule,
+  deny with reason, edit lock refusing a second chat's writes, stop with a card open.
