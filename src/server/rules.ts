@@ -42,11 +42,19 @@ export function parsePattern(pattern: string): { tool: string; spec?: string } {
 // Split a shell command into the commands it actually runs. Naive about quoting on purpose:
 // over-splitting only produces fragments that match no Allow rule, which makes a call *stricter*.
 export function splitCommand(cmd: string): string[] {
-  return cmd.split(/&&|\|\||;|\||&|\n/).map(s => s.trim()).filter(Boolean);
+  // A lone `&` separates commands, but not inside redirections like `2>&1` or `&>`.
+  return cmd.split(/&&|\|\||;|\||(?<![>&])&(?![>&])|\n/).map(s => s.trim()).filter(Boolean);
 }
 
 // Constructs that hide a second command inside the first. A prefix rule must never wave these through.
 const HIDDEN_EXEC = /\$\(|`|<\(|>\(/;
+
+// Output redirection writes files (`cat a > b`), so an allow rule for the command must not cover it.
+// Redirections between streams or into /dev/null are harmless and stay allowed.
+function writesViaRedirect(cmd: string): boolean {
+  const harmless = cmd.replace(/\d?>>?\s*\/dev\/null|\d?>&\d|&>\s*\/dev\/null/g, '');
+  return />/.test(harmless);
+}
 
 function matchBashSpec(spec: string, command: string): boolean {
   if (spec.endsWith(':*')) {
@@ -128,7 +136,7 @@ export function evaluate(
     const v = strongest(rules, r => ruleMatches(r.pattern, 'Bash', input, projectPath, part));
     if (RANK[v.bucket] > RANK[overall.bucket] || (overall.bucket === 'allow' && !overall.rule)) overall = v;
   }
-  if (overall.bucket === 'allow' && HIDDEN_EXEC.test(command)) return { bucket: 'ask' };
+  if (overall.bucket === 'allow' && (HIDDEN_EXEC.test(command) || writesViaRedirect(command))) return { bucket: 'ask' };
   return overall;
 }
 

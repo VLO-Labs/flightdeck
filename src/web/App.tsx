@@ -3,8 +3,9 @@ import type { Chat, Project } from '../shared/contracts.ts';
 import { api } from './api.ts';
 import { ChatView } from './ChatView.tsx';
 import { RulesView } from './RulesView.tsx';
+import { MapView } from './MapView.tsx';
 
-type View = { kind: 'chat'; chatId: number } | { kind: 'rules' } | { kind: 'none' };
+type View = { kind: 'chat'; chatId: number } | { kind: 'rules' } | { kind: 'map' } | { kind: 'none' };
 
 export function App() {
   const [projects, setProjects] = useState<Project[]>([]);
@@ -66,6 +67,9 @@ export function App() {
 
         {project && (
           <>
+            <button className={`link ${view.kind === 'map' ? 'active' : ''}`} onClick={() => setView({ kind: 'map' })}>
+              Map
+            </button>
             <div className="row-between">
               <label className="label">Chats</label>
               <button
@@ -108,9 +112,10 @@ export function App() {
         {view.kind === 'rules' && project && (
           <RulesView key={project.id} project={project} onProjectChanged={p => setProjects(ps => ps.map(x => (x.id === p.id ? p : x)))} />
         )}
+        {view.kind === 'map' && project && <MapView key={project.id} project={project} />}
         {view.kind === 'none' && (
           <div className="empty">
-            {project ? 'Open a chat or start a new one.' : 'Add a project: a git repository on the box.'}
+            {project ? 'Open the map, a chat, or start a new chat.' : 'Add a project: a git repository on the box.'}
           </div>
         )}
       </main>

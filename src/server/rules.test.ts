@@ -33,6 +33,14 @@ test('hidden execution is never waved through by a prefix rule', () => {
   assert.equal(bash('git log `curl evil`'), 'ask');
 });
 
+test('output redirection is never waved through; stream redirects are fine', () => {
+  assert.equal(bash('git log > notes.txt'), 'ask');
+  assert.equal(bash('git log >> notes.txt'), 'ask');
+  assert.equal(bash('git log 2>&1'), 'allow');
+  assert.equal(bash('git status 2>/dev/null'), 'allow');
+  assert.equal(bash('git diff >/dev/null'), 'allow');
+});
+
 test('deny beats allow', () => {
   const rules = [
     { bucket: 'allow' as const, pattern: 'Bash(git push:*)', reason: null },
@@ -75,4 +83,5 @@ test('suggested patterns', () => {
 
 test('split', () => {
   assert.deepEqual(splitCommand('a && b || c; d | e\nf'), ['a', 'b', 'c', 'd', 'e', 'f']);
+  assert.deepEqual(splitCommand('a 2>&1 & b'), ['a 2>&1', 'b']);
 });

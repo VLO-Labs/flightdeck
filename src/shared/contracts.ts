@@ -138,3 +138,72 @@ export const FeedItem = z.discriminatedUnion('kind', [
   }),
 ]);
 export type FeedItem = z.infer<typeof FeedItem>;
+
+// ---------------------------------------------------------------------------------------------
+// Maps (Phase 1b): diagrams generated from the code. Flat node list with `parent` links — the
+// hierarchy is what drill-down walks. Stored in the repo at `.flightdeck/<view>.json`.
+// ---------------------------------------------------------------------------------------------
+
+export const MapViewId = z.enum(['architecture', 'data-model', 'flows']);
+export type MapViewId = z.infer<typeof MapViewId>;
+export const MAP_VIEWS: { id: MapViewId; label: string }[] = [
+  { id: 'architecture', label: 'Architecture' },
+  { id: 'data-model', label: 'Data model' },
+  { id: 'flows', label: 'Flows' },
+];
+
+export const MapField = z.object({ name: z.string(), type: z.string(), note: z.string() });
+
+export const MapNode = z.object({
+  id: z.string().min(1),
+  parent: z.string().nullable(),
+  label: z.string().min(1),
+  kind: z.string(),
+  summary: z.string(),
+  files: z.array(z.string()), // repo-relative files, or directories ending in '/'
+  fields: z.array(MapField), // data-model columns; empty elsewhere
+});
+export type MapNode = z.infer<typeof MapNode>;
+
+export const MapEdge = z.object({ from: z.string(), to: z.string(), label: z.string() });
+export type MapEdge = z.infer<typeof MapEdge>;
+
+// What the agent returns (also the --json-schema it is held to).
+export const GeneratedMap = z.object({ nodes: z.array(MapNode), edges: z.array(MapEdge) });
+
+// What Flightdeck stores.
+export const StoredMap = GeneratedMap.extend({
+  version: z.literal(1),
+  view: MapViewId,
+  generatedAt: z.string(),
+  commit: z.string().nullable(), // HEAD when generated — the base for change detection
+  model: z.string(),
+  warnings: z.array(z.string()),
+});
+export type StoredMap = z.infer<typeof StoredMap>;
+
+export const MapJob = z.object({
+  view: MapViewId,
+  status: z.enum(['running', 'done', 'failed', 'stopped']),
+  startedAt: z.string(),
+  endedAt: z.string().nullable(),
+  steps: z.number(), // tool calls so far
+  activity: z.string(), // the latest one, for a progress line
+  error: z.string().nullable(),
+});
+export type MapJob = z.infer<typeof MapJob>;
+
+export const MapResponse = z.object({
+  map: StoredMap.nullable(),
+  staleNodeIds: z.array(z.string()), // nodes whose files changed since `commit`
+  changedFiles: z.array(z.string()),
+  job: MapJob.nullable(),
+});
+export type MapResponse = z.infer<typeof MapResponse>;
+
+export const FileResponse = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('file'), path: z.string(), content: z.string(), truncated: z.boolean() }),
+  z.object({ kind: z.literal('dir'), path: z.string(), entries: z.array(z.string()) }),
+  z.object({ kind: z.literal('binary'), path: z.string(), size: z.number() }),
+]);
+export type FileResponse = z.infer<typeof FileResponse>;
