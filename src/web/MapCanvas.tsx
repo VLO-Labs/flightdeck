@@ -116,6 +116,9 @@ export function MapCanvas({
   const contextKey = [...(inContext ?? [])].join(',');
   const heatKey = [...visibleHeat].map(([k, v]) => `${k}:${v}`).join(',');
 
+  // A new level or view mounts a fresh canvas; clear the old layout so it fits the new nodes, not the old.
+  useEffect(() => setLayout(null), [level, view, map]);
+
   useEffect(() => {
     const visible = map.nodes.filter(n => n.parent === level);
     const lifted = liftEdges(map.nodes, map.edges, level);
