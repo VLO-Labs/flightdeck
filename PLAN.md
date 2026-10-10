@@ -30,7 +30,7 @@ are produced by the agent from the code, never authored.
 | Billing | Claude **subscription** via the CLI's own login | See §5 | decided |
 | Permissions | **Approval cards** in the page | Same experience as the terminal's prompts | decided |
 | Parallel chats | **One chat at a time may change code**; others read/discuss/plan | Two agents editing one working tree collide (files, commits, test noise). Worktree-per-chat can come later | decided |
-| Language | TypeScript throughout — Hono (Node 22), Vite + React + React Flow | One language → the map schema and stream-event types are shared between server and UI, so drift is caught by the compiler, not by reading code | **working assumption, not locked** |
+| Language | TypeScript throughout — Hono (Node 22), Vite + React + React Flow; contracts as Zod schemas shared by server and UI | The spike showed the shared contracts (stream events, hook payload, map schema) are the delicate part; one definition means drift fails the compile instead of failing silently. Go was weighed: its single binary and process handling are real strengths, but they pay off at a scale Flightdeck won't reach | **decided 2026-10-10** |
 | Storage | SQLite (WAL) via Drizzle; run logs as files | Flightdeck must keep working when Docker/Postgres is down — that's when you'd open it. One user, one process. Switch to Postgres only if multi-user or vector search is needed | working assumption |
 | Port | `127.0.0.1:8100` (free as of 2026-10-10) | — | proposed |
 
@@ -145,11 +145,36 @@ Spike-verified (Claude Code 2.1.289):
   (`PreToolUse:Bash hook error: <reason>`), and it relays it to you.
 - **The `timeout` field is honoured** (5 s timed out at 5 s).
 
-Default policy (per project, adjustable):
-- **Auto-allow:** reads, searches, file edits in the chat holding the edit lock (git makes them
-  reviewable and revertible).
-- **Card:** shell commands not on the project's allowlist, anything else.
-- **Never offered:** deploy commands — deploys are not in Phase 1 at all.
+### Per-project approval rules
+Each project has its own rules, edited in the project's settings page. Every rule puts a tool
+call in one of three buckets:
+
+| Bucket | Effect |
+|---|---|
+| **Allow** | Runs without asking |
+| **Ask** | Approval card |
+| **Deny** | Refused outright, with the rule's reason sent to the agent |
+
+- **Rule syntax = Claude Code's own** (`Read`, `Edit`, `Bash(npm test:*)`, `Bash(git push:*)`,
+  `WebFetch(domain:example.com)`), so rules mean exactly what they mean in the terminal.
+- **Precedence: Deny > Ask > Allow**, matching Claude Code. Anything matching no rule → **Ask**.
+- **"Always allow" on a card** adds an Allow rule for that command pattern to the project
+  (shown before it's saved), the same as the terminal's "don't ask again".
+- **New projects start from a template:**
+  - Allow: reads and searches; file edits *by the chat holding the edit lock* (git makes them
+    reviewable and revertible); `git status/diff/log`; the project's test command.
+  - Ask: every other shell command; `git commit`; web fetches.
+  - Deny: `git push --force`, `rm -rf` outside the repo, deploy commands (`make <target>`,
+    `wrangler deploy`) — deploys are not in Phase 1 at all.
+  - Per project, e.g. allow `git push` in a repo where you want that, or deny it on the
+    Cloudflare Pages repos where a push to main *is* a deploy.
+- **The edit lock sits above the rules:** a chat without the lock is denied edits whatever the
+  rules say.
+
+**The rules live in Flightdeck's database, never in the repo.** A rule file inside the repo
+would be one the agent can edit — it could grant itself permissions. Flightdeck evaluates the
+rules inside the hook, so the agent never sees or touches them. Every decision (rule-matched or
+clicked) goes to the `approvals` audit table with the rule that decided it.
 
 **On hook timeout the call falls back to Claude Code's normal permission rules** — not a blanket
 deny (corrected by the spike; the first draft of this plan said "denied"). In headless `default`
@@ -218,7 +243,8 @@ request or job runs through the system).
 ## 7. Data
 
 SQLite at `/data/flightdeck/flightdeck.db` (WAL):
-`projects` (name, path) · `chats` (project, title, session_id) ·
+`projects` (name, path) · `rules` (project, bucket, pattern, reason) ·
+`chats` (project, title, session_id) ·
 `runs` (chat, status, started/ended, git HEAD before/after, log path) ·
 `approvals` (run, tool, input, decision, reason, decided_at — the audit trail).
 
@@ -248,7 +274,7 @@ action, so the UI shows denials from the stream; Claude Code itself refuses fore
 and pushes long waits into background tasks.
 
 **Phase 1a — chat.** Projects (add by path), several chats per project, live streaming,
-activity lines, approval cards, edit lock, stop, reopen. Usable on its own as a browser front
+activity lines, approval cards, per-project approval rules, edit lock, stop, reopen. Usable on its own as a browser front
 end to Claude Code.
 
 **Phase 1b — maps.** Generation, schema validation, the three views, drill-down, stale badges,
