@@ -41,3 +41,8 @@ with the box. Tests: `npm test`.
   Flow + ELK, drill-down, change detection, read-only file viewer. Flightdeck's own maps are
   committed in `.flightdeck/`. Hardened the rules engine on the way: output redirection is never
   covered by an allow rule.
+- **2026-10-10** — Phase 1c built: map pane in chats, nodes as message context (resolved
+  server-side), live read/edit highlighting, "Discuss in a new chat". First look at the real UI in
+  a browser found and fixed: double-click zoomed instead of opening a node, a double-click also
+  toggled context twice, the canvas fitted to the previous level, and a crowded chat header.
+  **Phase 1 is complete.**

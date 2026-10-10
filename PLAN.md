@@ -324,7 +324,7 @@ end to Claude Code.
 **Phase 1b — maps. BUILT 2026-10-10.** Generation, schema validation, the three views, drill-down, stale badges,
 read-only file viewing.
 
-**Phase 1c — maps ↔ chat.** Selecting nodes as chat context; nodes lighting up as the agent
+**Phase 1c — maps ↔ chat. BUILT 2026-10-10.** A map pane beside each chat (toggle in the header). **Context:** click a node to attach it as a chip; on send, the server resolves each `{view, nodeId}` from the map file on disk and prefixes the prompt with the node's label, kind, summary and files (the UI can only point at nodes, never inject text); unknown nodes are rejected. Verified: with the Rules Engine attached, the agent went straight to `src/server/rules.ts`. **Live highlighting:** the latest run's reads (blue) and successful edits (amber) map back to the most specific nodes covering each file and show on their visible ancestors; refused or failed edits light nothing. Claude Code reports **symlink-resolved paths** (`~/dev` → `/data/mac-sync/dev` on the box), so projects carry a `realPath`. The Map screen's node panel adds **Discuss in a new chat**. Original intent: Selecting nodes as chat context; nodes lighting up as the agent
 reads/edits; post-run "what changed" marked on the map.
 
 **Then**, once Flightdeck has replaced the terminal for daily work: a
