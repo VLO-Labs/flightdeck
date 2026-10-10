@@ -14,4 +14,9 @@ export const config = {
   // How long an approval card may stay open. The hook's own timeout is set a minute above this,
   // so Flightdeck always answers first (with a deny) rather than letting the hook time out.
   approvalTimeoutS: num(process.env.FLIGHTDECK_APPROVAL_TIMEOUT_S, 30 * 60),
+  // Second listener for the SSO gateway (nginx in Docker reaches the host at the docker0 address,
+  // 172.17.0.1). Every request on it must carry the gateway's secret header, because any container
+  // on the box can reach that address — and Flightdeck's API can run code. Unset = no listener.
+  gatewayHost: process.env.FLIGHTDECK_GATEWAY_HOST,
+  gatewaySecret: process.env.FLIGHTDECK_GATEWAY_SECRET ?? '',
 };

@@ -3,7 +3,7 @@ import { serve } from '@hono/node-server';
 import { serveStatic } from '@hono/node-server/serve-static';
 import { Hono } from 'hono';
 import { streamSSE } from 'hono/streaming';
-import { randomUUID } from 'node:crypto';
+import { randomUUID, timingSafeEqual } from 'node:crypto';
 import { existsSync, realpathSync, statSync } from 'node:fs';
 import { basename, isAbsolute } from 'node:path';
 import { and, desc, eq } from 'drizzle-orm';
@@ -22,6 +22,8 @@ import { viewFile } from './files.ts';
 
 const app = new Hono();
 const now = () => new Date().toISOString();
+
+app.get('/health', c => c.json({ ok: true }));
 
 // --- Claude Code's PreToolUse hook --------------------------------------------------------------
 app.post('/hook', async c => {
@@ -205,6 +207,7 @@ app.post('/api/approvals/:id', async c => {
 // The chat feed: full replay first, then live items. One stream per open chat.
 app.get('/api/chats/:id/feed', c => {
   const chatId = Number(c.req.param('id'));
+  c.header('X-Accel-Buffering', 'no'); // nginx (the SSO gateway) must not buffer a live stream
   return streamSSE(c, async stream => {
     const queue: string[] = [];
     let wake: (() => void) | undefined;
@@ -235,3 +238,26 @@ app.get('/*', serveStatic({ path: './dist/index.html' }));
 
 serve({ fetch: app.fetch, hostname: config.host, port: config.port }, info =>
   console.log(`flightdeck on http://${config.host}:${info.port} · data ${config.dataDir} · default model ${config.defaultModel}`));
+
+// The gateway listener: only requests carrying the gateway's secret, and never the hook endpoints
+// (those are for the local `claude` processes, on loopback).
+if (config.gatewayHost) {
+  const secret = Buffer.from(config.gatewaySecret);
+  if (secret.length < 32) {
+    console.error('FLIGHTDECK_GATEWAY_HOST is set but FLIGHTDECK_GATEWAY_SECRET is missing or short — gateway listener NOT started');
+  } else {
+    const fromGateway = (req: Request) => {
+      const got = Buffer.from(req.headers.get('x-flightdeck-gateway') ?? '');
+      return got.length === secret.length && timingSafeEqual(got, secret);
+    };
+    serve({
+      hostname: config.gatewayHost,
+      port: config.port,
+      fetch: req => {
+        if (new URL(req.url).pathname.startsWith('/hook')) return new Response('not found', { status: 404 });
+        if (!fromGateway(req)) return new Response('forbidden', { status: 403 });
+        return app.fetch(req);
+      },
+    }, info => console.log(`flightdeck gateway listener on http://${config.gatewayHost}:${info.port} (secret header required)`));
+  }
+}
