@@ -1,6 +1,6 @@
 // The diagram itself, shared by the Map screen and the map pane inside a chat: auto-layout of
 // one level of a map, drill-down by double-click, and markers (stale, selected, context, heat).
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { ReactFlow, Background, Controls, Handle, Position, type Edge, type Node, type NodeProps } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import ELK from 'elkjs/lib/elk.bundled.js';
@@ -93,6 +93,9 @@ export function MapCanvas({
 }) {
   const [layout, setLayout] = useState<{ nodes: Node<CardData>[]; edges: Edge[] } | null>(null);
   const level = path.at(-1) ?? null;
+  // A double-click also fires two clicks; hold each click briefly so a double-click is only a drill.
+  const clickTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  useEffect(() => () => clearTimeout(clickTimer.current), []);
 
   // A visible node is as hot as its hottest descendant, so activity deep inside shows at the top.
   const visibleHeat = useMemo(() => {
@@ -162,8 +165,13 @@ export function MapCanvas({
       fitView
       nodesDraggable={false}
       nodesConnectable={false}
-      onNodeClick={(_, n) => onSelect(n.id)}
+      zoomOnDoubleClick={false}
+      onNodeClick={(_, n) => {
+        clearTimeout(clickTimer.current);
+        clickTimer.current = setTimeout(() => onSelect(n.id), 230);
+      }}
       onNodeDoubleClick={(_, n) => {
+        clearTimeout(clickTimer.current);
         if (map.nodes.some(x => x.parent === n.id)) {
           onPath([...path, n.id]);
           onSelect(null);
