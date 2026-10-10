@@ -7,8 +7,7 @@ where in the system it happens and approve what it wants to run.
 Single user (Hayk), self-hosted on vlolabsdev, driving the **unmodified `claude` CLI on the
 Claude subscription** — never API tokens.
 
-**Status (2026-10-10):** planned, not built. Local repo only — it gets a GitHub repo
-(`VLO-Labs/flightdeck`) if it proves itself.
+**Status (2026-10-10):** planned, not built. Private repo `VLO-Labs/flightdeck`.
 
 | Read | For |
 |------|-----|

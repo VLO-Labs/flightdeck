@@ -22,7 +22,7 @@ are produced by the agent from the code, never authored.
 | Decision | Choice | Why | Status |
 |---|---|---|---|
 | Home | Own repo, not an HQ module | HQ is the business back-office; this is a dev tool | decided |
-| Repo | Local `~/dev/vlolabs/flightdeck`; GitHub only if it succeeds | — | decided |
+| Repo | `~/dev/vlolabs/flightdeck`, private `VLO-Labs/flightdeck` on GitHub | — | decided |
 | Runs on | **The box**, everything (UI + backend) | The `claude` CLI, its login, the repos and long-running agent processes all live there; Workers can't run a CLI. Splitting the UI onto Pages adds auth on two sides for no gain | decided |
 | Front door | Cloudflare Tunnel + the shared SSO gateway, service bound to **loopback** | It is effectively a shell with Hayk's credentials — never public | decided |
 | Process model | **Native systemd service** as `vlolabs`, not Docker | The agent needs the real environment: `~/dev`, `claude` login, `gh`, `make`. A container would mount all of it back in | decided |
@@ -206,7 +206,7 @@ read-only file viewing.
 **Phase 1c — maps ↔ chat.** Selecting nodes as chat context; nodes lighting up as the agent
 reads/edits; post-run "what changed" marked on the map.
 
-**Then** the repo goes to GitHub if Flightdeck has replaced the terminal for daily work, plus a
+**Then**, once Flightdeck has replaced the terminal for daily work: a
 `flightdeck.yml` playbook and `make flightdeck` in vlolabsdev-local (reading source from this
 path, like routing/alchemira), the tunnel route and the SSO gateway entry.
 
