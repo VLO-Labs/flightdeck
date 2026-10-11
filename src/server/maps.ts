@@ -36,9 +36,11 @@ that matters. Then return the map through the structured output. Rules:
   Prefer the narrowest directory that covers the node.
 - edges: from/to are node ids at ANY level; label says what flows ("HTTP /api/orders",
   "enqueues SendEmail", "reads users"). Connect the most specific nodes that are accurate; the
-  viewer lifts edges to whatever level is on screen. evidence: the repo-relative file where the
-  code makes this call/read/write, with a line when you saw it ("src/api/client.ts:42"). Omit it
-  rather than guess: an edge without evidence is shown to the reader as inferred.
+  viewer lifts edges to whatever level is on screen. evidence: for every edge you traced in the
+  code, the repo-relative file and line of the statement that makes the call/read/write — the
+  call itself, not an import ("src/api/client.ts:42"). Most edges should have one: you found
+  them by reading code. Omit it only for an edge you did not see in code; never guess a file or
+  line. An edge without evidence is shown to the reader as inferred.
 - fields: an empty array unless the view below says otherwise.`;
 
 const VIEW_PROMPTS: Record<MapViewId, string> = {
