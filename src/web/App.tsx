@@ -27,6 +27,8 @@ export function App() {
   const [error, setError] = useState('');
   // Nodes handed from the Map screen to a freshly created chat, attached to its first message.
   const [handoff, setHandoff] = useState<{ chatId: number; nodes: NodeRef[] } | null>(null);
+  // Narrow screens: with a chat open the sidebar steps aside; the chat's menu brings it back.
+  const [navOpen, setNavOpen] = useState(false);
 
   useEffect(() => {
     api.projects().then(ps => {
@@ -98,9 +100,21 @@ export function App() {
 
   const project = projects.find(p => p.id === projectId);
   const chat = view.kind === 'chat' ? chats.find(c => c.id === view.chatId) : undefined;
+  const openChat = (chatId: number) => { setView({ kind: 'chat', chatId }); setNavOpen(false); };
+  const newChat = async (nodes?: NodeRef[]) => {
+    if (!project) return;
+    try {
+      const c = await api.newChat(project.id);
+      setChats(cs => [c, ...cs]);
+      if (nodes) setHandoff({ chatId: c.id, nodes });
+      openChat(c.id);
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  };
 
   return (
-    <div className="app">
+    <div className={`app ${chat && !navOpen ? 'chat-open' : ''}`}>
       <aside className="sidebar">
         <div className="brand">Flightdeck</div>
 
@@ -140,28 +154,21 @@ export function App() {
         {project && (
           <>
             <nav className="side-nav">
-              <button className={`nav-item ${view.kind === 'map' ? 'active' : ''}`} onClick={() => setView({ kind: 'map' })}>Map</button>
-              <button className={`nav-item ${view.kind === 'rules' ? 'active' : ''}`} onClick={() => setView({ kind: 'rules' })}>Project settings</button>
+              <button className={`nav-item ${view.kind === 'map' ? 'active' : ''}`} onClick={() => { setView({ kind: 'map' }); setNavOpen(false); }}>Map</button>
+              <button className={`nav-item ${view.kind === 'rules' ? 'active' : ''}`} onClick={() => { setView({ kind: 'rules' }); setNavOpen(false); }}>Project settings</button>
             </nav>
             <div className="row-between">
               <label className="label">Chats</label>
-              <button
-                className="small"
-                onClick={async () => {
-                  const c = await api.newChat(project.id);
-                  setChats(cs => [c, ...cs]);
-                  setView({ kind: 'chat', chatId: c.id });
-                }}
-              >
-                New chat
-              </button>
+              <button className="small" onClick={() => newChat()}>+ New chat</button>
             </div>
             <nav className="chat-list">
               {chats.map(c => (
                 <button
                   key={c.id}
                   className={`chat-item ${view.kind === 'chat' && view.chatId === c.id ? 'active' : ''}`}
-                  onClick={() => setView({ kind: 'chat', chatId: c.id })}
+                  aria-current={view.kind === 'chat' && view.chatId === c.id ? 'page' : undefined}
+                  title={c.title}
+                  onClick={() => openChat(c.id)}
                 >
                   <span className="chat-title">{c.title}</span>
                   {c.running && <span className="badge run">running</span>}
@@ -183,6 +190,7 @@ export function App() {
           <ChatView
             key={chat.id} chat={chat} project={project} onChanged={refreshChats}
             initialContext={handoff?.chatId === chat.id ? handoff.nodes : undefined}
+            chats={chats} onSwitchChat={openChat} onNewChat={() => newChat()} onShowNav={() => setNavOpen(true)}
           />
         )}
         {view.kind === 'rules' && project && (
@@ -194,16 +202,7 @@ export function App() {
             project={project}
             initial={mapNav}
             onNav={setMapNav}
-            onAskInChat={async nodes => {
-              try {
-                const c = await api.newChat(project.id);
-                setChats(cs => [c, ...cs]);
-                setHandoff({ chatId: c.id, nodes });
-                setView({ kind: 'chat', chatId: c.id });
-              } catch (e) {
-                setError((e as Error).message);
-              }
-            }}
+            onAskInChat={nodes => newChat(nodes)}
           />
         )}
         {view.kind === 'none' && (

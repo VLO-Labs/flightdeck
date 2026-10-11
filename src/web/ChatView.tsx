@@ -1,9 +1,10 @@
-// One chat: the live feed (replayed, then streamed), approval cards, the composer, and the map
-// pane — attach nodes as context, watch the agent's reads and edits light the map up.
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+// One chat: the live feed (replayed, then streamed), approval cards and the composer on the left;
+// the project workspace on the right — PRD, the maps (attach nodes as context, watch the agent's
+// reads and edits light them up) and the code — behind a divider you can drag.
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type RefObject } from 'react';
 import Markdown, { type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { FeedItem, MAP_VIEWS, MODELS, type Chat, type CheckResult, type MapNode, type PlanCheck, type MapViewId, type PlanFreshness, type PlanResponse, type ProcessGroup, type Project, type StoredMap } from '../shared/contracts.ts';
+import { FeedItem, MODELS, type Chat, type CheckResult, type MapNode, type PlanCheck, type MapViewId, type PlanFreshness, type PlanResponse, type ProcessGroup, type Project, type StoredMap } from '../shared/contracts.ts';
 import { applyPlan, type PlannedNode } from '../shared/plan.ts';
 import { splitCommand } from '../shared/shell.ts';
 import { actState, derive, groupActivities, groupSummary, str, type Activity, type ActState, type Approval, type RateLimit } from './feedModel.ts';
@@ -11,15 +12,35 @@ import { api } from './api.ts';
 import { Crumbs, MapCanvas, nodesForFile, type Heat } from './MapCanvas.tsx';
 import { useMap, type NodeRef } from './MapView.tsx';
 import { FileViewer } from './FileViewer.tsx';
+import { PrdView } from './PrdView.tsx';
+import { SPLIT_DEFAULT, WORKSPACE_TABS, clampSplit, isMapTab, isWorkspaceTab, recall, remember, type WorkspaceTab } from './workspace.ts';
 
-export function ChatView({ chat, project, onChanged, initialContext }: {
+export function ChatView({ chat, project, onChanged, initialContext, chats, onSwitchChat, onNewChat, onShowNav }: {
   chat: Chat; project: Project; onChanged: () => void; initialContext?: NodeRef[];
+  chats: Chat[]; onSwitchChat: (id: number) => void; onNewChat: () => void; onShowNav: () => void;
 }) {
-  const [ctx, setCtx] = useState<NodeRef[]>(initialContext ?? []);
-  const [showMap, setShowMap] = useState(() => storageGet('fd.chatmap') !== '0');
+  // Picks up where this chat was left: its unsent draft, attached context and workspace tab.
+  const [mem] = useState(() => recall(chat.id, storage()));
+  const [ctx, setCtx] = useState<NodeRef[]>(() => withContext(mem.ctx, initialContext ?? []));
+  const [draft, setDraft] = useState(mem.draft);
+  const [tab, setTab] = useState<WorkspaceTab>(() => mem.tab ?? lastTab());
+  // The file open in the Code tab ('' = the project's top folder), at a line when one is known.
+  const [file, setFile] = useState<{ path: string; line?: number }>(mem.file ?? { path: '' });
+  useEffect(() => remember(chat.id, { draft, ctx, tab, file }, storage()), [chat.id, draft, ctx, tab, file]);
+  const [showWorkspace, setShowWorkspace] = useState(() => storageGet('fd.chatmap') !== '0');
+  // Narrow screens show one panel at a time; this is the one in front there.
+  const [panel, setPanel] = useState<'chat' | 'workspace'>('chat');
+  const [split, setSplit] = useState(() => Number(storageGet('fd.split')) || SPLIT_DEFAULT);
+  const splitBox = useRef<HTMLDivElement>(null);
+  const openTab = (t: WorkspaceTab) => {
+    setTab(t);
+    storageSet('fd.wtab', t);
+    setShowWorkspace(true);
+    storageSet('fd.chatmap', '1');
+    setPanel('workspace');
+  };
   const [items, setItems] = useState<FeedItem[]>([]);
   const [connected, setConnected] = useState(false);
-  const [draft, setDraft] = useState('');
   const [error, setError] = useState('');
   const [cur, setCur] = useState(chat); // optimistic copy of the chat's mode/models
   useEffect(() => setCur(chat), [chat]);
@@ -68,19 +89,20 @@ export function ChatView({ chat, project, onChanged, initialContext }: {
   const planCount = useMemo(() => items.filter(isPlanItem).length, [items]);
   useEffect(() => {
     if (seenPlans.current === null) return; // still replaying
-    if (planCount > seenPlans.current) setPlanSignal(p => ({ seq: p.seq + 1 }));
+    if (planCount > seenPlans.current) {
+      setPlanSignal(p => ({ seq: p.seq + 1 }));
+      if (!isMapTab(tab)) setTab('architecture'); // a new plan version is drawn on the maps
+    }
     seenPlans.current = planCount;
   }, [planCount]);
   const showPlan = (versionId: number) => {
-    setShowMap(true);
-    storageSet('fd.chatmap', '1');
+    openTab(isMapTab(tab) ? tab : 'architecture');
     setPlanSignal(p => ({ versionId, seq: p.seq + 1 }));
   };
   const rows = useMemo(() => groupActivities(d.blocks, d.ended), [d]);
   const [openGroups, setOpenGroups] = useState<Set<string>>(new Set());
-  // A file Claude read or edited, opened in the code viewer (at a line when one is known).
-  const [viewing, setViewing] = useState<{ path: string; line?: number } | null>(null);
-  const openFile = (path: string, line?: number) => setViewing({ path, line });
+  // A file Claude read or edited opens in the workspace's Code tab (at a line when one is known).
+  const openFile = (path: string, line?: number) => { setFile({ path, line }); openTab('code'); };
 
   // Coming back to a chat puts it where it was left; the first time, at the end.
   useLayoutEffect(() => {
@@ -126,10 +148,14 @@ export function ChatView({ chat, project, onChanged, initialContext }: {
     setCtx(cs => (cs.some(c => c.view === n.view && c.nodeId === n.nodeId) ? cs.filter(c => !(c.view === n.view && c.nodeId === n.nodeId)) : [...cs, n]));
 
   return (
-    <div className="chat-split">
+    <div
+      ref={splitBox}
+      className={`chat-split ${showWorkspace ? 'with-workspace' : ''} front-${panel}`}
+      style={{ '--split': `${split}%` } as CSSProperties}
+    >
     <div className={`chat mode-${cur.mode}`}>
       <header className="chat-header">
-        <div className="chat-name">{chat.title}</div>
+        <ChatPicker chat={chat} chats={chats} onSwitch={onSwitchChat} onNew={onNewChat} onShowNav={onShowNav} />
         <div className="chat-meta">
           <div className="mode-toggle" role="radiogroup" aria-label="Mode" title="Discuss: read, analyze, plan — edits are refused. Build: may change code.">
             {(['discuss', 'build'] as const).map(m => (
@@ -156,11 +182,13 @@ export function ChatView({ chat, project, onChanged, initialContext }: {
           {d.rateLimit && <RateLimitBadge r={d.rateLimit} />}
           {!connected && <span className="badge bad">reconnecting…</span>}
           <button
-            className={`small ${showMap ? '' : 'ghost'}`}
-            onClick={() => setShowMap(v => { storageSet('fd.chatmap', v ? '0' : '1'); return !v; })}
+            className={`small wide-only ${showWorkspace ? '' : 'ghost'}`}
+            aria-pressed={showWorkspace}
+            onClick={() => setShowWorkspace(v => { storageSet('fd.chatmap', v ? '0' : '1'); return !v; })}
           >
-            {showMap ? 'Hide map' : 'Show map'}
+            {showWorkspace ? 'Hide workspace' : 'Show workspace'}
           </button>
+          <button className="small narrow-only" onClick={() => openTab(tab)}>Workspace →</button>
         </div>
       </header>
       <RunningStrip project={project} turnRunning={d.running} />
@@ -179,7 +207,7 @@ export function ChatView({ chat, project, onChanged, initialContext }: {
         {items.length === 0 && (
           <div className="feed-empty muted">
             {connected
-              ? <>Ask about the code, plan a change, or say what to build. Click boxes on the map (<em>Show map</em>) to attach them as context. {cur.mode === 'discuss' ? 'This chat is in Discuss, so nothing gets edited until you switch it to Build.' : ''}</>
+              ? <>Ask about the code, plan a change, or say what to build. Click boxes on the workspace's maps to attach them as context. {cur.mode === 'discuss' ? 'This chat is in Discuss, so nothing gets edited until you switch it to Build.' : ''}</>
               : 'Loading…'}
           </div>
         )}
@@ -224,7 +252,7 @@ export function ChatView({ chat, project, onChanged, initialContext }: {
                     : <span>{(['verified', 'missing', 'review', 'unexpected'] as const).filter(k => b.counts[k]).map(k => (
                         <span key={k} className={`check-tag ${k}`}>{b.counts[k]} {CHECK_LABEL[k]}</span>
                       ))}</span>}
-                  <button className="small" onClick={() => (b.versionId ? showPlan(b.versionId) : setShowMap(true))}>Show on map</button>
+                  <button className="small" onClick={() => (b.versionId ? showPlan(b.versionId) : openTab(isMapTab(tab) ? tab : 'architecture'))}>Show on map</button>
                 </div>
               );
             case 'plan':
@@ -283,12 +311,44 @@ export function ChatView({ chat, project, onChanged, initialContext }: {
           : <button onClick={send} disabled={!draft.trim()}>Send</button>}
       </footer>
     </div>
-    {showMap && <ChatMapPane chat={chat} project={project} ctx={ctx} onToggle={toggleCtx} touched={d.touched} live={d.running} planSignal={planSignal} />}
-    {viewing && (
-      <FileViewer
-        project={project} path={viewing.path} line={viewing.line}
-        onOpen={p => setViewing({ path: p })} onClose={() => setViewing(null)}
-      />
+    {showWorkspace && (
+      <>
+        <SplitHandle box={splitBox} split={split} onSplit={setSplit} />
+        <section className="workspace" aria-label="Workspace">
+          <div className="ws-tabs">
+            <button className="small ghost narrow-only" onClick={() => setPanel('chat')}>← Chat</button>
+            <div role="tablist" aria-label="Workspace views" className="ws-tablist" onKeyDown={e => {
+              // Arrow keys move between tabs, as in any tab list.
+              const i = WORKSPACE_TABS.findIndex(t => t.id === tab);
+              const step = e.key === 'ArrowRight' ? 1 : e.key === 'ArrowLeft' ? -1 : 0;
+              if (!step) return;
+              e.preventDefault();
+              const next = WORKSPACE_TABS[(i + step + WORKSPACE_TABS.length) % WORKSPACE_TABS.length]!;
+              openTab(next.id);
+              (e.currentTarget.querySelector(`[data-tab="${next.id}"]`) as HTMLElement | null)?.focus();
+            }}>
+              {WORKSPACE_TABS.map(t => (
+                <button
+                  key={t.id} role="tab" data-tab={t.id} aria-selected={tab === t.id} tabIndex={tab === t.id ? 0 : -1}
+                  className={tab === t.id ? 'on' : ''} onClick={() => openTab(t.id)}
+                >
+                  {t.label}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="ws-body" role="tabpanel">
+            {tab === 'prd' && <PrdView project={project} />}
+            {isMapTab(tab) && <ChatMapPane chat={chat} project={project} view={tab} ctx={ctx} onToggle={toggleCtx} touched={d.touched} live={d.running} planSignal={planSignal} />}
+            {tab === 'code' && (
+              <FileViewer
+                inline project={project} path={file.path} line={file.line}
+                onOpen={p => setFile({ path: p })} onClose={() => setFile({ path: '' })}
+              />
+            )}
+          </div>
+        </section>
+      </>
     )}
     </div>
   );
@@ -306,11 +366,10 @@ const toggled = (s: Set<string>, k: string) => { const n = new Set(s); if (n.has
 // it over the current map (PLAN.md §10); the map files themselves are never touched.
 export type PlanSignal = { versionId?: number; seq: number }; // "show this version" / "a new one arrived"
 
-function ChatMapPane({ chat, project, ctx, onToggle, touched, live, planSignal }: {
-  chat: Chat; project: Project; ctx: NodeRef[]; onToggle: (n: NodeRef) => void; touched: Map<string, Heat>; live: boolean;
+function ChatMapPane({ chat, project, view, ctx, onToggle, touched, live, planSignal }: {
+  chat: Chat; project: Project; view: MapViewId; ctx: NodeRef[]; onToggle: (n: NodeRef) => void; touched: Map<string, Heat>; live: boolean;
   planSignal: PlanSignal;
 }) {
-  const [view, setView] = useState<MapViewId>('architecture');
   const { data } = useMap(project.id, view);
   const [path, setPath] = useState<string[]>([]);
   const [plan, setPlan] = useState<PlanResponse | null>(null);
@@ -385,11 +444,8 @@ function ChatMapPane({ chat, project, ctx, onToggle, touched, live, planSignal }
   const pickedNode = picked ? (shown?.nodes.find(n => n.id === picked) as PlannedNode | undefined) : undefined;
 
   return (
-    <aside className="chat-map">
+    <div className="chat-map">
       <div className="chat-map-head">
-        <div className="map-tabs">
-          {MAP_VIEWS.map(v => <button key={v.id} className={v.id === view ? 'on' : ''} onClick={() => setView(v.id)}>{v.label}</button>)}
-        </div>
         {version && (
           <div className="mode-toggle" role="radiogroup" aria-label="Layer">
             {(['current', 'plan'] as const).map(l => (
@@ -430,8 +486,108 @@ function ChatMapPane({ chat, project, ctx, onToggle, touched, live, planSignal }
             </div>}
       </div>
       <div className="chat-map-foot muted">Click a node to attach it to your message · double-click to open it</div>
-    </aside>
+    </div>
   );
+}
+
+// The divider between chat and workspace: drag it, or focus it and use the arrow keys; a
+// double-click puts it back. The chat's share is kept across chats and reloads.
+function SplitHandle({ box, split, onSplit }: { box: RefObject<HTMLDivElement | null>; split: number; onSplit: (pct: number) => void }) {
+  const set = (pct: number) => {
+    const w = box.current?.getBoundingClientRect().width ?? 0;
+    const v = clampSplit(pct, w);
+    onSplit(v);
+    return v;
+  };
+  const save = (v: number) => storageSet('fd.split', String(v));
+  return (
+    <div
+      className="split-handle wide-only" role="separator" aria-orientation="vertical" aria-label="Resize chat and workspace"
+      aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(split)} tabIndex={0}
+      title="Drag to resize · double-click to reset"
+      onPointerDown={e => {
+        const rect = box.current?.getBoundingClientRect();
+        if (!rect) return;
+        e.preventDefault();
+        const el = e.currentTarget;
+        el.setPointerCapture(e.pointerId);
+        document.body.classList.add('resizing');
+        let last = split;
+        const move = (ev: PointerEvent) => { last = set(((ev.clientX - rect.left) / rect.width) * 100); };
+        const up = () => {
+          el.removeEventListener('pointermove', move);
+          el.removeEventListener('pointerup', up);
+          el.removeEventListener('pointercancel', up);
+          document.body.classList.remove('resizing');
+          save(last);
+        };
+        el.addEventListener('pointermove', move);
+        el.addEventListener('pointerup', up);
+        el.addEventListener('pointercancel', up);
+      }}
+      onDoubleClick={() => save(set(SPLIT_DEFAULT))}
+      onKeyDown={e => {
+        const step = e.key === 'ArrowLeft' ? -2 : e.key === 'ArrowRight' ? 2 : 0;
+        if (e.key === 'Home' || e.key === 'End') { e.preventDefault(); save(set(e.key === 'Home' ? 0 : 100)); return; }
+        if (!step) return;
+        e.preventDefault();
+        save(set(split + step));
+      }}
+    />
+  );
+}
+
+// The chat's name, and the menu to switch to another chat of this project or start one: there on
+// every screen size, so chats stay reachable when the sidebar is out of sight.
+function ChatPicker({ chat, chats, onSwitch, onNew, onShowNav }: {
+  chat: Chat; chats: Chat[]; onSwitch: (id: number) => void; onNew: () => void; onShowNav: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const root = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const away = (e: PointerEvent) => { if (!root.current?.contains(e.target as Node)) setOpen(false); };
+    const esc = (e: KeyboardEvent) => { if (e.key === 'Escape') { setOpen(false); root.current?.querySelector('button')?.focus(); } };
+    document.addEventListener('pointerdown', away);
+    document.addEventListener('keydown', esc);
+    return () => { document.removeEventListener('pointerdown', away); document.removeEventListener('keydown', esc); };
+  }, [open]);
+  const pick = (f: () => void) => { setOpen(false); f(); };
+  return (
+    <div className="chat-picker" ref={root}>
+      <button className="chat-picker-button" aria-haspopup="true" aria-expanded={open} onClick={() => setOpen(o => !o)} title={chat.title}>
+        <span className="chat-name">{chat.title}</span>
+        <span className="muted" aria-hidden="true">▾</span>
+      </button>
+      {open && (
+        <div className="chat-picker-menu" role="menu" aria-label="Chats">
+          <button role="menuitem" className="chat-item" onClick={() => pick(onNew)}>+ New chat</button>
+          <div className="chat-picker-list">
+            {chats.map(c => (
+              <button
+                key={c.id} role="menuitem" className={`chat-item ${c.id === chat.id ? 'active' : ''}`}
+                aria-current={c.id === chat.id ? 'page' : undefined} title={c.title}
+                onClick={() => pick(() => onSwitch(c.id))}
+              >
+                <span className="chat-title">{c.title}</span>
+                {c.running && <span className="badge run">running</span>}
+                {c.holdsEditLock && <span className="badge lock">editing</span>}
+              </button>
+            ))}
+          </div>
+          <button role="menuitem" className="chat-item narrow-only muted" onClick={() => pick(onShowNav)}>Projects, map and settings…</button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+const withContext = (have: NodeRef[], add: NodeRef[]) =>
+  [...have, ...add.filter(n => !have.some(c => c.view === n.view && c.nodeId === n.nodeId))];
+const lastTab = (): WorkspaceTab => { const t = storageGet('fd.wtab'); return isWorkspaceTab(t) ? t : 'architecture'; };
+// localStorage itself can throw on access (blocked storage); the memory then lasts the page only.
+function storage(): Storage | undefined {
+  try { return localStorage; } catch { return undefined; }
 }
 
 const FRESHNESS: Record<PlanFreshness['state'], { label: string; tone: string; title: string }> = {

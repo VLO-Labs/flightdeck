@@ -1,5 +1,6 @@
 // Read-only file viewer: a file with line numbers and syntax highlighting, or a folder's entries to
-// click through. Opens over the map, so closing it returns to exactly where the map was.
+// click through. Opens over the map, so closing it returns to exactly where the map was; or, `inline`,
+// as the chat workspace's Code tab.
 import { useEffect, useMemo, useRef, useState } from 'react';
 import hljs from 'highlight.js/lib/core';
 import bash from 'highlight.js/lib/languages/bash';
@@ -46,7 +47,7 @@ const escapeHtml = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;')
 
 export type MapPlace = { id: string; trail: string }; // a map node that covers the open file
 
-export function FileViewer({ project, path, line, places, onOpen, onClose, onShowOnMap }: {
+export function FileViewer({ project, path, line, places, onOpen, onClose, onShowOnMap, inline }: {
   project: Project;
   path: string;
   line?: number; // highlight and scroll to this line
@@ -54,6 +55,7 @@ export function FileViewer({ project, path, line, places, onOpen, onClose, onSho
   onOpen: (p: string) => void;
   onClose: () => void;
   onShowOnMap?: (id: string) => void;
+  inline?: boolean; // a pane of its own, not a dialog: no backdrop, no Close, Esc left alone
 }) {
   const [f, setF] = useState<FileResponse | null>(null);
   const [error, setError] = useState('');
@@ -66,10 +68,11 @@ export function FileViewer({ project, path, line, places, onOpen, onClose, onSho
   }, [project.id, path]);
 
   useEffect(() => {
+    if (inline) return;
     const onKey = (e: KeyboardEvent) => e.key === 'Escape' && onClose();
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [onClose]);
+  }, [onClose, inline]);
 
   const code = useMemo(() => {
     if (f?.kind !== 'file') return null;
@@ -95,60 +98,60 @@ export function FileViewer({ project, path, line, places, onOpen, onClose, onSho
   // Breadcrumb: every folder on the way is a link.
   const parts = path.replace(/\/$/, '').split('/').filter(Boolean);
   const isDir = f?.kind === 'dir' || path.endsWith('/') || path === '';
-  return (
-    <div className="viewer-backdrop" onClick={onClose}>
-      <div className="viewer" role="dialog" aria-label={path || project.name} onClick={e => e.stopPropagation()}>
-        <header className="viewer-head">
-          <nav className="viewer-crumbs mono">
-            <button className="link" onClick={() => onOpen('')}>{project.name}</button>
-            {parts.map((p, i) => {
-              const last = i === parts.length - 1;
-              const to = parts.slice(0, i + 1).join('/') + '/';
-              return (
-                <span key={to}>
-                  <span className="sep">/</span>
-                  {last && !isDir ? <strong>{p}</strong> : <button className="link" onClick={() => onOpen(to)}>{p}</button>}
-                </span>
-              );
-            })}
-          </nav>
-          <span className="viewer-meta">
-            {code && <span className="muted">{code.lines.toLocaleString()} lines{code.lang ? ` · ${code.lang}` : ''}</span>}
-            <button className="small" onClick={onClose} title="Close (Esc)">Close</button>
-          </span>
-        </header>
-        {places && places.length > 0 && (
-          <div className="viewer-places">
-            <span className="muted">On the map:</span>
-            {places.map(p => (
-              <button key={p.id} className="chip" onClick={() => onShowOnMap?.(p.id)} title="Show this on the map">{p.trail}</button>
+  const viewer = (
+    <div className={`viewer ${inline ? 'inline' : ''}`} role={inline ? 'region' : 'dialog'} aria-label={path || project.name} onClick={e => e.stopPropagation()}>
+      <header className="viewer-head">
+        <nav className="viewer-crumbs mono">
+          <button className="link" onClick={() => onOpen('')}>{project.name}</button>
+          {parts.map((p, i) => {
+            const last = i === parts.length - 1;
+            const to = parts.slice(0, i + 1).join('/') + '/';
+            return (
+              <span key={to}>
+                <span className="sep">/</span>
+                {last && !isDir ? <strong>{p}</strong> : <button className="link" onClick={() => onOpen(to)}>{p}</button>}
+              </span>
+            );
+          })}
+        </nav>
+        <span className="viewer-meta">
+          {code && <span className="muted">{code.lines.toLocaleString()} lines{code.lang ? ` · ${code.lang}` : ''}</span>}
+          {!inline && <button className="small" onClick={onClose} title="Close (Esc)">Close</button>}
+        </span>
+      </header>
+      {places && places.length > 0 && (
+        <div className="viewer-places">
+          <span className="muted">On the map:</span>
+          {places.map(p => (
+            <button key={p.id} className="chip" onClick={() => onShowOnMap?.(p.id)} title="Show this on the map">{p.trail}</button>
+          ))}
+        </div>
+      )}
+      <div className="viewer-body" ref={body}>
+        {error && <div className="error">{error}</div>}
+        {!f && !error && <div className="muted">Loading…</div>}
+        {f?.kind === 'dir' && (
+          <div className="dir">
+            {f.entries.length === 0 && <div className="muted">Empty folder.</div>}
+            {f.entries.map(e => (
+              <button key={e} className={`dir-entry mono ${e.endsWith('/') ? 'is-dir' : ''}`} onClick={() => onOpen(f.path + e)}>{e}</button>
             ))}
           </div>
         )}
-        <div className="viewer-body" ref={body}>
-          {error && <div className="error">{error}</div>}
-          {!f && !error && <div className="muted">Loading…</div>}
-          {f?.kind === 'dir' && (
-            <div className="dir">
-              {f.entries.length === 0 && <div className="muted">Empty folder.</div>}
-              {f.entries.map(e => (
-                <button key={e} className={`dir-entry mono ${e.endsWith('/') ? 'is-dir' : ''}`} onClick={() => onOpen(f.path + e)}>{e}</button>
-              ))}
+        {f?.kind === 'binary' && <div className="muted">Binary file, {f.size.toLocaleString()} bytes.</div>}
+        {f?.kind === 'file' && code && (
+          <>
+            <div className="code-grid">
+              {line && line <= code.lines && <div className="code-mark" style={{ top: `calc(${line - 1} * var(--code-lh))` }} />}
+              <pre className="code-gutter" aria-hidden="true">{code.gutter}</pre>
+              <pre className="code-text"><code className="hljs" dangerouslySetInnerHTML={{ __html: code.html }} /></pre>
             </div>
-          )}
-          {f?.kind === 'binary' && <div className="muted">Binary file, {f.size.toLocaleString()} bytes.</div>}
-          {f?.kind === 'file' && code && (
-            <>
-              <div className="code-grid">
-                {line && line <= code.lines && <div className="code-mark" style={{ top: `calc(${line - 1} * var(--code-lh))` }} />}
-                <pre className="code-gutter" aria-hidden="true">{code.gutter}</pre>
-                <pre className="code-text"><code className="hljs" dangerouslySetInnerHTML={{ __html: code.html }} /></pre>
-              </div>
-              {f.truncated && <div className="muted truncated">Showing the first 512 KB.</div>}
-            </>
-          )}
-        </div>
+            {f.truncated && <div className="muted truncated">Showing the first 512 KB.</div>}
+          </>
+        )}
       </div>
     </div>
   );
+  if (inline) return viewer;
+  return <div className="viewer-backdrop" onClick={onClose}>{viewer}</div>;
 }

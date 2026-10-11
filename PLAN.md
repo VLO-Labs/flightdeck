@@ -445,3 +445,37 @@ All four phases, each tested before the next (62 unit tests; live runs in Playgr
 - If Build finds the plan doesn't fit reality: the agent stops and says so (leaning), rather than
   amending the plan itself.
 - Done plans stay in the chat as history; a decision record in the repo is not in v1.
+
+## 11. Requirements workspace (started 2026-10-11)
+
+A persistent PRD — overview, global business rules with stable ids (`BR-001`…), feature specs with
+acceptance criteria — kept as Markdown **in the repository** (`docs/requirements/PRD.md`,
+`docs/requirements/features/*.md`; in a multi-repo folder, inside the maps repo), next to a chat that
+can discuss it. `CLAUDE.md` stays the engineering instructions; the PRD says what the software must do.
+
+### Decisions
+- **Approval lives in Flightdeck's database, not in the file** (same reason as the rules, §4: the
+  agent can edit anything in the repo). An approval is an insert-only row: document, content hash,
+  the approved text. A `status:` line in the file is informational. If the file's hash differs
+  from the approved one, the UI says "changed since approval" and Build keeps using the approved text.
+  Approving never commits.
+- **Only the UI writes `docs/requirements/`**: the hook refuses agent edits there in both modes. The
+  agent proposes edits through an MCP tool (like `propose_plan`); Accept writes the file. Every save
+  carries the hash it started from, and a mismatch (an IDE edit meanwhile) is refused as a conflict.
+- **Ids are never renumbered**: a new id is one above the highest ever used; a removed rule stays,
+  marked retired.
+- **Context is a reference** (`{doc, id, revision}`), resolved server-side, as map nodes are.
+- Plans stay a *layer* on the map tabs (§10 rule 3), not a tab of their own.
+
+### Phases
+1. Audit — done.
+2. **Workspace shell — BUILT 2026-10-11.** The chat screen is chat (left) + workspace (right) with
+   tabs PRD · Architecture · Data model · Flows · Code, behind a divider (drag, arrow keys, double-click
+   resets; kept in `fd.split`). Each chat keeps its draft (also across reloads), attached context,
+   workspace tab and open file when you switch away (`src/web/workspace.ts`). The chat's name is a
+   Chats menu (switch / new) on every screen size. Under 1000px one panel at a time; under 700px the
+   sidebar steps aside while a chat is open (the Chats menu brings it back). Files the agent touched
+   open in the Code tab instead of a dialog. The PRD tab shows `docs/requirements/PRD.md` read-only.
+3. Document lifecycle: create from a template, edit/save with conflict detection, approve, versions.
+4. Contextual conversations: click a rule to attach it; agent-proposed edits to accept or reject.
+5. Build gets the approved relevant requirements (with their revision); links to maps and files.
