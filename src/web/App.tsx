@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Chat, Project } from '../shared/contracts.ts';
 import { api } from './api.ts';
+import { STACKS } from '../shared/stacks.ts';
 import { ChatView } from './ChatView.tsx';
 import { RulesView } from './RulesView.tsx';
 import { MapView, type NodeRef } from './MapView.tsx';
@@ -12,7 +13,9 @@ export function App() {
   const [projectId, setProjectId] = useState<number | undefined>();
   const [chats, setChats] = useState<Chat[]>([]);
   const [view, setView] = useState<View>({ kind: 'none' });
-  const [adding, setAdding] = useState(false);
+  const [adding, setAdding] = useState<'existing' | 'new' | null>(null);
+  // A chat to open once the project switch below has run (a new project opens its scaffold chat).
+  const openAfterSwitch = useRef<number | null>(null);
   const [error, setError] = useState('');
   // Nodes handed from the Map screen to a freshly created chat, attached to its first message.
   const [handoff, setHandoff] = useState<{ chatId: number; nodes: NodeRef[] } | null>(null);
@@ -32,7 +35,8 @@ export function App() {
 
   useEffect(() => {
     setChats([]);
-    setView({ kind: 'none' });
+    setView(openAfterSwitch.current ? { kind: 'chat', chatId: openAfterSwitch.current } : { kind: 'none' });
+    openAfterSwitch.current = null;
     if (projectId !== undefined) localStorageSet('fd.project', String(projectId));
     refreshChats();
   }, [projectId, refreshChats]);
@@ -56,13 +60,28 @@ export function App() {
           {projects.length === 0 && <option value="">No projects yet</option>}
           {projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
         </select>
-        <button className="link" onClick={() => setAdding(a => !a)}>{adding ? 'Cancel' : '+ Add project'}</button>
-        {adding && (
+        <div className="row-between">
+          <button className="link" onClick={() => setAdding(a => (a === 'new' ? null : 'new'))}>{adding === 'new' ? 'Cancel' : '+ New project'}</button>
+          <button className="link" onClick={() => setAdding(a => (a === 'existing' ? null : 'existing'))}>{adding === 'existing' ? 'Cancel' : '+ Add existing'}</button>
+        </div>
+        {adding === 'existing' && (
           <AddProject
             onAdded={p => {
               setProjects(ps => [...ps, p]);
               setProjectId(p.id);
-              setAdding(false);
+              setAdding(null);
+            }}
+          />
+        )}
+        {adding === 'new' && (
+          <NewProject
+            onCreated={(p, chatId, err) => {
+              // The project exists even if the scaffold turn couldn't start; the chat can be resent.
+              if (err) setError(`Project created, but the scaffold didn't start: ${err}`);
+              setProjects(ps => [...ps, p]);
+              openAfterSwitch.current = chatId;
+              setProjectId(p.id);
+              setAdding(null);
             }}
           />
         )}
@@ -174,6 +193,46 @@ function AddProject({ onAdded }: { onAdded: (p: Project) => void }) {
       {missing && (
         <button type="button" onClick={() => add(true)}>Create {missing} as a new git repository</button>
       )}
+    </form>
+  );
+}
+
+const slug = (s: string) => s.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+
+function NewProject({ onCreated }: { onCreated: (p: Project, chatId: number, error?: string) => void }) {
+  const [name, setName] = useState('');
+  // The folder follows the name until it's edited by hand.
+  const [path, setPath] = useState<string | null>(null);
+  const [stack, setStack] = useState<string>(STACKS[0].id);
+  const [description, setDescription] = useState('');
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
+  const folder = path ?? `/home/vlolabs/dev/vlolabs/${slug(name)}`;
+  return (
+    <form
+      className="add-project"
+      onSubmit={async e => {
+        e.preventDefault();
+        setError('');
+        setBusy(true);
+        try {
+          const r = await api.createProject({ name: name.trim(), path: folder.trim(), stack, description });
+          onCreated(r.project, r.chatId, r.error);
+        } catch (err) {
+          setError((err as Error).message);
+        } finally {
+          setBusy(false);
+        }
+      }}
+    >
+      <input value={name} onChange={e => setName(e.target.value)} placeholder="Name" required />
+      <input value={folder} onChange={e => setPath(e.target.value)} placeholder="Folder on the box" />
+      <select value={stack} onChange={e => setStack(e.target.value)}>
+        {STACKS.map(s => <option key={s.id} value={s.id}>{s.label}</option>)}
+      </select>
+      <textarea value={description} onChange={e => setDescription(e.target.value)} placeholder="What is it? (optional, goes to Claude)" rows={3} />
+      <button type="submit" disabled={busy || !slug(name)}>Create and scaffold</button>
+      {error && <div className="error">{error}</div>}
     </form>
   );
 }

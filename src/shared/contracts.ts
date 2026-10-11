@@ -1,6 +1,7 @@
 // The contracts shared by server and UI. Everything that crosses the wire is defined here once,
 // so a mismatch between the two sides fails the type check instead of failing silently.
 import { z } from 'zod';
+import { STACK_IDS } from './stacks.ts';
 
 // ---------------------------------------------------------------------------------------------
 // Approval rules
@@ -40,6 +41,12 @@ export const NewProject = z.object({
   name: z.string().min(1),
   path: z.string().min(1),
   create: z.boolean().optional(), // the folder doesn't exist yet: make it and `git init` it
+});
+export const CreateProject = z.object({
+  name: z.string().trim().min(1),
+  path: z.string().min(1),
+  stack: z.enum(STACK_IDS),
+  description: z.string().optional(),
 });
 export const ProjectSettings = z.object({ discussModel: z.string().min(1), buildModel: z.string().min(1) });
 

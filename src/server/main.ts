@@ -9,7 +9,7 @@ import { existsSync, mkdirSync, realpathSync, statSync } from 'node:fs';
 import { basename, isAbsolute } from 'node:path';
 import { and, desc, eq } from 'drizzle-orm';
 import {
-  ChatSettings, Decision, HookPayload, MapViewId, NewProject, NewRule, ProjectSettings, SendMessage,
+  ChatSettings, CreateProject, Decision, HookPayload, MapViewId, NewProject, NewRule, ProjectSettings, SendMessage,
   type Chat, type MapResponse, type Project,
 } from '../shared/contracts.ts';
 import { config } from './config.ts';
@@ -20,6 +20,7 @@ import { effectiveModel, isRunning, startTurn, stopTurn } from './runner.ts';
 import { TEMPLATE_RULES } from './rules.ts';
 import { changedSince, generatorDecision, jobFor, jobForSession, readMap, staleNodeIds, startGeneration, stopGeneration } from './maps.ts';
 import { viewFile } from './files.ts';
+import { STACKS, scaffoldPrompt } from '../shared/stacks.ts';
 
 const app = new Hono();
 const now = () => new Date().toISOString();
@@ -63,12 +64,8 @@ app.post('/api/projects', async c => {
   if (!isAbsolute(path)) return c.json({ error: 'the path must be absolute' }, 400);
   // Only a folder that doesn't exist yet can be created; an existing folder is never git-init'ed.
   if (!existsSync(path) && create) {
-    try {
-      mkdirSync(path, { recursive: true });
-      execFileSync('git', ['init', '-b', 'main'], { cwd: path, encoding: 'utf8' });
-    } catch (e) {
-      return c.json({ error: `couldn't create ${path}: ${(e as Error).message}` }, 400);
-    }
+    const err = initRepo(path);
+    if (err) return c.json({ error: err }, 400);
   }
   if (!existsSync(path))
     return c.json({ error: `${path} doesn't exist on the box.`, missing: true }, 400);
@@ -77,12 +74,45 @@ app.post('/api/projects', async c => {
   if (db.select().from(projects).where(eq(projects.path, path)).get())
     return c.json({ error: 'that folder is already a project' }, 400);
 
+  return c.json(toProject(insertProject(body.data.name || basename(path), path)));
+});
+
+// A brand-new project: make the folder, `git init` it, and open a Build chat that scaffolds the
+// chosen stack. The scaffolding is an ordinary turn, so its commands go through the approval rules.
+app.post('/api/projects/new', async c => {
+  const body = CreateProject.safeParse(await c.req.json());
+  if (!body.success) return c.json({ error: 'name, folder and stack are required' }, 400);
+  const { name, path, stack, description } = body.data;
+  if (!isAbsolute(path)) return c.json({ error: 'the folder must be an absolute path' }, 400);
+  if (existsSync(path)) return c.json({ error: `${path} already exists. Use "Add project" for an existing repository.` }, 400);
+  const err = initRepo(path);
+  if (err) return c.json({ error: err }, 400);
+
+  const project = insertProject(name, path);
+  const chat = db.insert(chats)
+    .values({ projectId: project.id, title: `Scaffold: ${STACKS.find(s => s.id === stack)!.label}`, sessionId: randomUUID(), mode: 'build', createdAt: now() })
+    .returning().get();
+  const r = startTurn(chat.id, scaffoldPrompt(stack, name, description));
+  return c.json({ project: toProject(project), chatId: chat.id, error: r.ok ? undefined : r.error });
+});
+
+function initRepo(path: string): string | null {
+  try {
+    mkdirSync(path, { recursive: true });
+    execFileSync('git', ['init', '-b', 'main'], { cwd: path, encoding: 'utf8' });
+    return null;
+  } catch (e) {
+    return `couldn't create ${path}: ${(e as Error).message}`;
+  }
+}
+
+function insertProject(name: string, path: string) {
   const project = db.insert(projects)
-    .values({ name: body.data.name || basename(path), path, discussModel: config.defaultModel, buildModel: config.defaultModel, createdAt: now() })
+    .values({ name, path, discussModel: config.defaultModel, buildModel: config.defaultModel, createdAt: now() })
     .returning().get();
   for (const r of TEMPLATE_RULES) db.insert(rules).values({ ...r, projectId: project.id }).run();
-  return c.json(toProject(project));
-});
+  return project;
+}
 
 app.post('/api/projects/:id/settings', async c => {
   const body = ProjectSettings.safeParse(await c.req.json());

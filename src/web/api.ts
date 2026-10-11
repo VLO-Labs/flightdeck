@@ -17,6 +17,8 @@ const Ok = z.object({ ok: z.boolean() });
 export const api = {
   projects: () => call(z.array(Project), 'GET', '/api/projects'),
   addProject: (name: string, path: string, create?: boolean) => call(Project, 'POST', '/api/projects', { name, path, create }),
+  createProject: (body: { name: string; path: string; stack: string; description?: string }) =>
+    call(z.object({ project: Project, chatId: z.number(), error: z.string().optional() }), 'POST', '/api/projects/new', body),
   chats: (projectId: number) => call(z.array(Chat), 'GET', `/api/projects/${projectId}/chats`),
   newChat: (projectId: number) => call(Chat, 'POST', `/api/projects/${projectId}/chats`),
   send: (chatId: number, text: string, context?: { view: string; nodeId: string }[]) =>
