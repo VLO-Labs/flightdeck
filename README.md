@@ -28,6 +28,31 @@ refuses anything without the gateway's `X-Flightdeck-Gateway` secret and never s
 |------|-----|
 | [`PLAN.md`](PLAN.md) | What it is, the decisions and why, how the chat works, the build phases |
 
+## Requirements (PRD)
+Each project can keep a PRD and feature specs **in its own repository**, as plain Markdown that works
+anywhere (VS Code, GitHub, Claude Code):
+
+```
+docs/requirements/PRD.md               overview, users, scope, business rules (BR-001 …)
+docs/requirements/features/<name>.md   one per feature: scenarios, edge cases, acceptance criteria (AC-001 …)
+```
+In a multi-repo folder they live in the repository that keeps the maps. `CLAUDE.md` stays the
+engineering instructions; the PRD says what the software must do.
+
+- **Start one:** open a chat → workspace **PRD** tab → *Start the PRD* (a template with headings and
+  guidance, no rules), edit, Save. *+ Feature spec* adds a spec. Or write the files by hand and they
+  show up.
+- **Ids** start a heading or list item (`### BR-001 · …`, `- **AC-001** …`), never change and are
+  never reused; a rule that no longer applies is marked `(retired)`. Saves that break this are refused.
+- **Approve** freezes exactly the text you see as vN (kept in Flightdeck's database); later edits are
+  a draft until approved. Nothing is committed for you — commit the files like any others.
+- **In chat:** *+ chat* on any rule or section attaches it to your message. In Discuss the agent can
+  propose edits, which you accept or reject as a diff; it can't write the files. In Build, attached
+  requirements, and any ids the message or the approved plan names, go as their **approved** text,
+  and each run records which versions it used.
+- **Links** in the documents: `[name](src/file.ts#L10)` opens the file, `[name](map:architecture/<node-id>)`
+  shows the node on its map.
+
 ## History
 - **2026-10-10** — idea scoped in a Claude Code session: IDE replacement for an
   architecture-first / vibe-coding workflow. Named Flightdeck. Phase 1 = projects, diagrams,
@@ -58,3 +83,7 @@ refuses anything without the gateway's `X-Flightdeck-Gateway` secret and never s
   (`flightdeck.vlolabsdev.com`). The gateway reaches the native listener over docker0 with a
   secret header; UFW needed an allow from the docker subnets (Docker-published services never
   hit UFW, a native one does).
+- **2026-10-11** — Requirements workspace (PLAN.md §11): chat beside a tabbed workspace (PRD, maps,
+  code); PRD and feature specs as Markdown in the repo with stable ids, approved revisions kept by
+  Flightdeck, requirements attached to messages, agent-proposed edits reviewed as diffs, Build given
+  the approved text.

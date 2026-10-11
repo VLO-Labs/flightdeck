@@ -7,7 +7,7 @@ import { closeSync, existsSync, fsyncSync, lstatSync, mkdirSync, openSync, readd
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { and, desc, eq } from 'drizzle-orm';
 import type { ProposeRequirementsEdit, RequirementDoc, RequirementDocSummary, RequirementProposal, RequirementsResponse } from '../shared/contracts.ts';
-import { PRD_FILE, REQUIREMENTS_DIR, checkRevision, findRef, isDocPath, parseRequirements } from '../shared/requirements.ts';
+import { ID_PATTERN, PRD_FILE, REQUIREMENTS_DIR, checkRevision, findRef, isDocPath, parseRequirements } from '../shared/requirements.ts';
 import { applyEdits } from '../shared/diff.ts';
 import { db, chats, requirementApprovals, requirementProposals } from './db.ts';
 import { git } from './maps.ts';
@@ -208,7 +208,11 @@ export function isRequirementsPath(p: ProjectLike & { realPath?: string }, file:
 
 // --- Context: a requirement or section attached to a message ------------------------------------
 
-export type RequirementContextItem = { doc: string; ref: string; label: string; revision: string; text: string };
+export type RequirementContextItem = {
+  doc: string; ref: string; label: string; revision: string; text: string;
+  version?: number; // Build: the approved version the text comes from
+  auto?: boolean; // Build: not attached, but named in the message or the approved plan
+};
 const CONTEXT_MAX = 8000;
 
 // Read the attached part from the file as it is now, and say which revision that is: Discuss talks
@@ -325,4 +329,50 @@ export function requirementsOverview(p: ProjectLike) {
       approvedVersion: d.approved?.version ?? null, ids: d.ids,
     })),
   };
+}
+
+// --- Build: the approved text, never a newer draft ------------------------------------------------
+
+const cap = (t: string) => (t.length > CONTEXT_MAX ? `${t.slice(0, CONTEXT_MAX)}\n… (cut at ${CONTEXT_MAX} characters; read the approved version in Flightdeck for the rest)` : t);
+
+// For a Build turn: the part as it stands in the document's latest APPROVED version. If the file has
+// moved on since, that is said, and the approved text is still what is given. Not approved (never, or
+// the part only exists in a draft) is refused: Build doesn't build on unreviewed requirements.
+export function resolveApprovedRef(p: ProjectLike, doc: string, ref: string, auto = false): RequirementContextItem {
+  if (!isDocPath(doc)) throw new RequirementsError('not a requirements document path');
+  const latest = approvalsOf(p.id, doc)[0];
+  if (!latest) throw new RequirementsError(`${doc} has never been approved, so Build can't use it. Approve it in the PRD tab, or discuss it in Discuss mode.`);
+  const found = findRef(latest.content, ref);
+  if (!found) throw new RequirementsError(`${ref} isn't in approved v${latest.version} of ${doc} (only in the draft since). Approve the new revision first, or switch to Discuss.`);
+  let cur: { hash: string } | null = null;
+  try { cur = readCurrent(p, doc); } catch { /* reported as changed */ }
+  const revision = `approved v${latest.version}` + (cur?.hash === latest.hash ? '' : '; the file has unapproved changes since, not part of this spec');
+  return { doc, ref, label: found.label + (found.retired ? ' (retired)' : ''), revision, text: cap(found.text), version: latest.version, ...(auto ? { auto } : {}) };
+}
+
+// Requirement ids named in some text (the message, the approved plan), found in the latest approved
+// version of any document. `unapproved`: named, but in no approved version.
+export function approvedRefsIn(p: ProjectLike, text: string, skip: Set<string>): { items: RequirementContextItem[]; unapproved: string[] } {
+  const ids = [...new Set(text.match(new RegExp(`\\b${ID_PATTERN.source}\\b`, 'g')) ?? [])].filter(id => !skip.has(id));
+  const items: RequirementContextItem[] = [];
+  const unapproved: string[] = [];
+  if (ids.length === 0) return { items, unapproved };
+  const docs = listRequirements(p).docs;
+  for (const id of ids.slice(0, 20)) {
+    const d = docs.find(x => x.approved && approvalsOf(p.id, x.path)[0] && findRef(approvalsOf(p.id, x.path)[0]!.content, id));
+    if (d) items.push(resolveApprovedRef(p, d.path, id, true));
+    else if (docs.some(x => x.ids.includes(id))) unapproved.push(id);
+  }
+  return { items, unapproved };
+}
+
+// One line for Build: which documents have nothing approved, or a draft newer than what is.
+export function requirementsStatusLine(p: ProjectLike): string {
+  let docs: RequirementDocSummary[];
+  try { docs = listRequirements(p).docs; } catch { return ''; }
+  const notes = docs.filter(d => d.hash !== null || d.approved).flatMap(d =>
+    d.state === 'changed' ? [`${d.path} has unapproved changes since v${d.approved!.version}`]
+    : d.state === 'draft' ? [`${d.path} has never been approved`]
+    : d.state === 'missing' ? [`${d.path} (approved v${d.approved!.version}) is missing from the repository`] : []);
+  return notes.length ? `Requirements not part of the spec: ${notes.join('; ')}. Don't implement from those drafts; if the work needs them, say so.` : '';
 }

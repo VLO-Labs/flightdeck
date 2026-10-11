@@ -8,6 +8,8 @@
 // and never renumbered: a rule that no longer applies stays, marked retired (`(retired)` in its
 // line, or the id struck through: `~~BR-004~~`).
 
+import { MapViewId } from './contracts.ts';
+
 export type RequirementItem = {
   id: string;
   title: string; // the rest of its line, without the id and markers
@@ -183,6 +185,11 @@ export const FEATURE_TEMPLATE = (name: string) => `# ${name}
 ## Constraints
 <!-- Limits, dependencies, rules from the PRD it relies on (by id, e.g. BR-002). -->
 
+## Links
+<!-- Where it lives, once it does: map nodes as [Checkout API](map:architecture/<node-id>), files as
+[checkout.ts](src/checkout.ts#L10), and its tests. A link points the way; it is not proof that a
+requirement is met — code and tests are. -->
+
 ## Open questions
 
 ## Acceptance criteria
@@ -207,4 +214,26 @@ export function findRef(md: string, ref: string): { label: string; text: string;
   const lines = md.split('\n');
   const text = lines.slice(head.line - 1, next ? next.line - 1 : lines.length).join('\n').trimEnd();
   return { label: `§ ${title}`, text };
+}
+
+// Where a link in a document points, if inside Flightdeck. `docPath` is the document's path in the
+// project; `./` and `../` are relative to its folder, other relative paths to the repository root.
+export function linkTarget(href: string, docPath: string):
+  | { kind: 'map'; view: MapViewId; id: string } | { kind: 'file'; path: string; line?: number } | null {
+  const m = /^map:([a-z-]+)\/(.+)$/.exec(href);
+  if (m) {
+    const view = MapViewId.safeParse(m[1]);
+    return view.success ? { kind: 'map', view: view.data, id: decodeURIComponent(m[2]!) } : null;
+  }
+  if (href === '' || href.startsWith('#') || /^[a-z][a-z0-9+.-]*:/i.test(href) || href.startsWith('//')) return null;
+  const [raw, hash] = href.split('#');
+  const line = /^L(\d+)/.exec(hash ?? '')?.[1];
+  const repoRoot = docPath.slice(0, docPath.indexOf(REQUIREMENTS_DIR));
+  const base = raw!.startsWith('./') || raw!.startsWith('../') ? docPath.split('/').slice(0, -1) : repoRoot.split('/').filter(Boolean);
+  const parts = [...base];
+  for (const seg of decodeURIComponent(raw!).replace(/^\//, '').split('/')) {
+    if (seg === '..') parts.pop();
+    else if (seg !== '.' && seg !== '') parts.push(seg);
+  }
+  return { kind: 'file', path: parts.join('/') + (raw!.endsWith('/') ? '/' : ''), ...(line ? { line: Number(line) } : {}) };
 }

@@ -509,4 +509,20 @@ can discuss it. `CLAUDE.md` stays the engineering instructions; the PRD says wha
    told what became of its recent proposals. Verified live (Haiku, Discuss): with BR-001 attached the
    agent quoted it without reading the file, proposed the change through the tool, and Accept wrote it
    as *changed since v2*.
-5. Build gets the approved relevant requirements (with their revision); links to maps and files.
+5. **Build and links — BUILT 2026-10-11.** In Build, an attached requirement resolves against its
+   document's latest **approved** version, not the file; a part that exists only in a draft (or a
+   document never approved) refuses the send with the reason. Requirement ids named in the message or
+   in the chat's approved plan are added the same way (shown as *named:* in the history); ids that
+   exist only in drafts are listed to the agent as not approved. Each Build turn is told which
+   documents have unapproved drafts ("not part of the spec"), to stop rather than reinterpret, and that
+   a requirement is met by code and tests, not by a map. `runs.requirements` records `{doc, ref,
+   version}` for every requirement a Build turn was given. Discuss is asked to name requirement ids in
+   plans, so approved plans carry them into Build. Links in documents: a repository path opens in the
+   Code tab (`#L12` at a line; `./`, `../` relative to the document), `map:<view>/<node-id>` opens the
+   map, drills to the node and selects it. Verified live (Haiku, Build): with BR-001 attached and
+   BR-002/BR-003 in the text, the agent quoted v2's wording (not the newer draft), BR-002 came in as
+   named, BR-003 was reported as unapproved, and the run recorded both v2 revisions.
+
+### Not in v1
+Automatic requirement ↔ code traceability; a diff of the file against its approved version; editing
+a proposal before accepting it; attached context surviving a reload; requirement ids in the URL.

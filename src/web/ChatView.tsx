@@ -27,6 +27,8 @@ export function ChatView({ chat, project, onChanged, initialContext, chats, onSw
   const [ctx, setCtx] = useState<ContextRef[]>(() => withContext(mem.ctx, initialContext ?? []));
   // "Review" on a proposal card: the PRD tab opens that proposal.
   const [review, setReview] = useState<{ id: number; seq: number } | null>(null);
+  // A map: link in a requirements document: show that node on its map tab.
+  const [reveal, setReveal] = useState<{ view: MapViewId; id: string; seq: number } | null>(null);
   const [draft, setDraft] = useState(mem.draft);
   const [tab, setTab] = useState<WorkspaceTab>(() => mem.tab ?? lastTab());
   // The file open in the Code tab ('' = the project's top folder), at a line when one is known.
@@ -293,7 +295,7 @@ export function ChatView({ chat, project, onChanged, initialContext, chats, onSw
       <footer className="composer">
         <div className="mode-line">
           {cur.mode === 'build'
-            ? <><strong>Build</strong> — Claude may change files in this project (as your rules allow).</>
+            ? <><strong>Build</strong> — Claude may change files in this project (as your rules allow). Requirements go as their approved version.</>
             : <><strong>Discuss</strong> — read-only: Claude reads and proposes; edits are refused.</>}
         </div>
         {error && <div className="error">{error}</div>}
@@ -351,8 +353,13 @@ export function ChatView({ chat, project, onChanged, initialContext, chats, onSw
             </div>
           </div>
           <div className="ws-body" role="tabpanel">
-            {tab === 'prd' && <PrdView project={project} ctx={ctx} onToggle={toggleCtx} review={review} />}
-            {isMapTab(tab) && <ChatMapPane chat={chat} project={project} view={tab} ctx={ctx} onToggle={toggleCtx} touched={d.touched} live={d.running} planSignal={planSignal} />}
+            {tab === 'prd' && (
+              <PrdView
+                project={project} ctx={ctx} onToggle={toggleCtx} review={review} onOpenFile={openFile}
+                onRevealNode={(view, id) => { setReveal(r => ({ view, id, seq: (r?.seq ?? 0) + 1 })); openTab(view); }}
+              />
+            )}
+            {isMapTab(tab) && <ChatMapPane chat={chat} project={project} view={tab} ctx={ctx} onToggle={toggleCtx} touched={d.touched} live={d.running} planSignal={planSignal} reveal={reveal} />}
             {tab === 'code' && (
               <FileViewer
                 inline project={project} path={file.path} line={file.line}
@@ -379,9 +386,9 @@ const toggled = (s: Set<string>, k: string) => { const n = new Set(s); if (n.has
 // it over the current map (PLAN.md §10); the map files themselves are never touched.
 export type PlanSignal = { versionId?: number; seq: number }; // "show this version" / "a new one arrived"
 
-function ChatMapPane({ chat, project, view, ctx, onToggle, touched, live, planSignal }: {
+function ChatMapPane({ chat, project, view, ctx, onToggle, touched, live, planSignal, reveal }: {
   chat: Chat; project: Project; view: MapViewId; ctx: ContextRef[]; onToggle: (n: NodeRef) => void; touched: Map<string, Heat>; live: boolean;
-  planSignal: PlanSignal;
+  planSignal: PlanSignal; reveal: { view: MapViewId; id: string; seq: number } | null;
 }) {
   const { data } = useMap(project.id, view);
   const [path, setPath] = useState<string[]>([]);
@@ -416,6 +423,22 @@ function ChatMapPane({ chat, project, view, ctx, onToggle, touched, live, planSi
 
   const map = data?.map ?? null;
   const version = plan?.version ?? null;
+  // A link asked to see a node: open the level that holds it, select it and bring it into view.
+  const revealed = useRef(0);
+  const [focus, setFocus] = useState<{ id: string; seq: number } | null>(null);
+  useEffect(() => {
+    if (!reveal || reveal.view !== view || reveal.seq === revealed.current || !map) return;
+    revealed.current = reveal.seq;
+    const byId = new Map(map.nodes.map(n => [n.id, n]));
+    const node = byId.get(reveal.id);
+    if (!node) return;
+    const at: string[] = [];
+    for (let p = node.parent ? byId.get(node.parent) : undefined; p; p = p.parent ? byId.get(p.parent) : undefined) at.unshift(p.id);
+    setLayer('current');
+    setPath(at);
+    setPicked(node.id);
+    setFocus({ id: node.id, seq: reveal.seq });
+  }, [reveal?.seq, view, map]);
   const onPlan = layer === 'plan' && version !== null;
   // Results on the cards, when looking at the version that was checked.
   const checks = useMemo(() => {
@@ -486,6 +509,7 @@ function ChatMapPane({ chat, project, view, ctx, onToggle, touched, live, planSi
         {shown && shown.nodes.length > 0
           ? <MapCanvas
               map={shown} view={view} stale={stale} path={path} onPath={setPath} inContext={inContext} heat={heat} plan={onPlan} checks={checks}
+              selected={picked} focus={focus}
               // A narrow side pane, used to pick nodes: an overview matters more than full-size text.
               minFitZoom={0.35}
               onSelect={id => {

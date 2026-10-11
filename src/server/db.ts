@@ -43,6 +43,7 @@ export const runs = sqliteTable('runs', {
   status: text('status', { enum: ['running', 'finished', 'failed', 'stopped'] }).notNull(),
   detail: text('detail'),
   planVersionId: integer('plan_version_id'), // the approved plan version a Build turn implemented
+  requirements: text('requirements'), // JSON [{doc, ref, version}]: the approved requirement revisions a Build turn was given
   headBefore: text('head_before'),
   headAfter: text('head_after'),
   startedAt: text('started_at').notNull(),
@@ -198,6 +199,7 @@ addColumn('chats', 'discuss_model TEXT');
 addColumn('chats', 'build_model TEXT');
 addColumn('projects', 'maps_repo TEXT');
 addColumn('runs', 'plan_version_id INTEGER');
+addColumn('runs', 'requirements TEXT');
 addColumn('plan_versions', 'maps TEXT');
 // After the columns exist, so the trigger covers all of them (recreated in case an older one lacks one).
 sqlite.exec(`

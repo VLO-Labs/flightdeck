@@ -11,7 +11,7 @@ import { cancelPendingForRun, releaseLockForChat } from './hook.ts';
 import { MCP_SERVER } from './mcp.ts';
 import { approvedVersion, currentMaps, planStatusLine } from './plans.ts';
 import { planAsText } from '../shared/plan.ts';
-import { proposalStatusLine, type RequirementContextItem } from './requirements.ts';
+import { approvedRefsIn, proposalStatusLine, requirementsStatusLine, type RequirementContextItem } from './requirements.ts';
 
 const proposals = (chatId: number) => { const l = proposalStatusLine(chatId); return l ? `\n${l}` : ''; };
 
@@ -57,7 +57,24 @@ const DISCUSS_PROMPT =
   '(or the whole text, for a new document) and a short summary. The user reviews the change as a diff ' +
   'and accepts or rejects it; accepting makes a draft, which they approve separately. Ids (BR-001, ' +
   'AC-001) never change and are never reused: add new ones above the highest, and mark ones that no ' +
-  'longer apply "(retired)" instead of deleting them.';
+  'longer apply "(retired)" instead of deleting them. When a plan implements requirements, name their ids ' +
+  'in its summary or steps: Build turns are given the approved text of every id the plan names.';
+
+// With approved requirements in the message, Build implements them as written (PLAN.md §11).
+const REQUIREMENTS_PROMPT =
+  'The APPROVED REQUIREMENTS given with the message are the spec for this work: implement them as ' +
+  'written, and cite their ids (e.g. BR-001) where the code or tests carry them out. If the code can\'t ' +
+  'satisfy one, or one is unclear or conflicts with the plan, stop and say so instead of reinterpreting ' +
+  'it; the user revises the requirement in Discuss and approves it. The requirements files in ' +
+  'docs/requirements are not yours to edit (edits there are refused). A requirement is met when code ' +
+  'and tests show it, not when a map or plan mentions it.';
+
+function requirementsLines(project: { id: number; path: string; mapsRepo: string | null }, any: boolean, unapproved: string[]): string {
+  const lines = [any ? REQUIREMENTS_PROMPT : '', requirementsStatusLine(project)];
+  if (unapproved.length) lines.push(`Named but not approved: ${unapproved.join(', ')}. They exist only in a draft; ask the user to approve them before building on them.`);
+  const out = lines.filter(Boolean).join('\n\n');
+  return out ? `\n\n${out}` : '';
+}
 
 // Every turn states its mode: a resumed session still holds the earlier Discuss turns (and the
 // agent's own "switch to Build to implement" replies), so without this a Build turn reads as Discuss.
@@ -141,14 +158,20 @@ function contextBlock(items: ContextItem[]): string {
       `- ${n.label} (${n.kind}, ${n.view} view): ${n.summary}\n  files: ${n.files.join(', ') || '(none recorded)'}`);
     out += `[Flightdeck: the user attached these parts of the project map to this message]\n${lines.join('\n')}\n\n`;
   }
-  if (reqs.length) {
-    const blocks = reqs.map(r => `--- ${r.label} — ${r.doc} (${r.revision})\n${r.text}`);
-    out += `[Flightdeck: the user attached these requirements to this message, as the files read now]\n${blocks.join('\n\n')}\n--- end of attached requirements\n\n`;
+  const block = (rs: RequirementContextItem[]) => rs.map(r => `--- ${r.label} — ${r.doc} (${r.revision})\n${r.text}`).join('\n\n');
+  const approved = reqs.filter(r => r.version !== undefined);
+  const drafts = reqs.filter(r => r.version === undefined);
+  if (drafts.length) {
+    out += `[Flightdeck: the user attached these requirements to this message, as the files read now]\n${block(drafts)}\n--- end of attached requirements\n\n`;
+  }
+  if (approved.length) {
+    out += '[Flightdeck: the APPROVED requirements for this work — attached by the user, or named in the message or the approved plan. ' +
+      `They are the spec; a newer draft is not]\n${block(approved)}\n--- end of approved requirements\n\n`;
   }
   return out;
 }
 
-export function startTurn(chatId: number, text: string, context: ContextItem[] = []): { ok: true } | { ok: false; error: string } {
+export function startTurn(chatId: number, text: string, initialContext: ContextItem[] = []): { ok: true } | { ok: false; error: string } {
   if (active.has(chatId)) return { ok: false, error: 'this chat is already running' };
   const chat = db.select().from(chats).where(eq(chats.id, chatId)).get();
   if (!chat) return { ok: false, error: 'no such chat' };
@@ -156,19 +179,33 @@ export function startTurn(chatId: number, text: string, context: ContextItem[] =
   if (!project) return { ok: false, error: 'no such project' };
 
   const mode = chat.mode;
+  let context = initialContext;
   const model = effectiveModel(chat, project, mode);
   // A Build turn implements the chat's approved plan version, if it has one, and records which.
   const approved = mode === 'build' ? approvedVersion(chatId) : null;
+  // …and the approved requirements: those attached, plus any the message or the approved plan names.
+  let unapproved: string[] = [];
+  if (mode === 'build') {
+    const attached = new Set(context.flatMap(c => ('doc' in c ? [c.ref] : [])));
+    const named = approvedRefsIn(project, `${text}\n${approved ? planAsText(approved.body, approved.version, currentMaps(project)) : ''}`, attached);
+    context = [...context, ...named.items];
+    unapproved = named.unapproved;
+  }
+  const usedRequirements = context.flatMap(c => ('version' in c && c.version !== undefined ? [{ doc: c.doc, ref: c.ref, version: c.version }] : []));
   const run = db
     .insert(runs)
-    .values({ chatId, status: 'running', headBefore: gitHead(project.path), startedAt: now(), planVersionId: approved?.id ?? null })
+    .values({
+      chatId, status: 'running', headBefore: gitHead(project.path), startedAt: now(), planVersionId: approved?.id ?? null,
+      requirements: usedRequirements.length ? JSON.stringify(usedRequirements) : null,
+    })
     .returning()
     .get();
 
   // The agent can't see Flightdeck's UI, so each turn says where the chat's plan stands.
+  const reqLines = mode === 'build' ? requirementsLines(project, usedRequirements.length > 0, unapproved) : '';
   const prompt = mode === 'discuss' ? `${DISCUSS_PROMPT}\n\n${planStatusLine(chatId)}${proposals(chatId)}`
-    : approved ? `${BUILD_PROMPT}\n\n${PLAN_PROMPT}\n\n${planAsText(approved.body, approved.version, currentMaps(project))}`
-    : `${BUILD_PROMPT}\n\n${planStatusLine(chatId)}`;
+    : approved ? `${BUILD_PROMPT}\n\n${PLAN_PROMPT}\n\n${planAsText(approved.body, approved.version, currentMaps(project))}${reqLines}`
+    : `${BUILD_PROMPT}\n\n${planStatusLine(chatId)}${reqLines}`;
   const args = [
     '-p', modeBlock(prompt) + contextBlock(context) + text,
     chat.started ? '--resume' : '--session-id', chat.sessionId,
@@ -199,7 +236,7 @@ export function startTurn(chatId: number, text: string, context: ContextItem[] =
     kind: 'user', at: now(), runId: run.id, text, mode, model,
     context: context.length ? context.map(c => ('view' in c
       ? { view: c.view, nodeId: c.nodeId, label: c.label }
-      : { doc: c.doc, ref: c.ref, revision: c.revision, label: c.label })) : undefined,
+      : { doc: c.doc, ref: c.ref, revision: c.revision, label: c.label, ...(c.auto ? { auto: true } : {}) })) : undefined,
   });
   feed.append(chatId, { kind: 'run', at: now(), runId: run.id, status: 'started' });
 

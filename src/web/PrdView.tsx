@@ -4,10 +4,10 @@
 // draft and never changes an approved version. Any requirement or section can be attached to the
 // chat's next message; edits the agent proposes from a Discuss chat are reviewed here as a diff.
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import Markdown, { type Components } from 'react-markdown';
+import Markdown, { defaultUrlTransform, type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import type { Project, RequirementDoc, RequirementDocSummary, RequirementProposal, RequirementsResponse } from '../shared/contracts.ts';
-import { FEATURE_TEMPLATE, ID_PATTERN, PRD_FILE, PRD_TEMPLATE, featureSlug, nextId, parseRequirements } from '../shared/requirements.ts';
+import { type MapViewId, type Project, type RequirementDoc, type RequirementDocSummary, type RequirementProposal, type RequirementsResponse } from '../shared/contracts.ts';
+import { FEATURE_TEMPLATE, ID_PATTERN, PRD_FILE, REQUIREMENTS_DIR, linkTarget, PRD_TEMPLATE, featureSlug, nextId, parseRequirements } from '../shared/requirements.ts';
 import { diffLines, hunks } from '../shared/diff.ts';
 import { ApiError, api } from './api.ts';
 import { ctxKey, isNodeRef, type ContextRef, type ReqRef } from './workspace.ts';
@@ -17,8 +17,9 @@ type Editing = { text: string; baseHash: string | null };
 const edits = new Map<string, Editing>();
 const lastDoc = new Map<number, string>(); // per project: the document last open
 
-export function PrdView({ project, ctx, onToggle, review }: {
+export function PrdView({ project, ctx, onToggle, review, onOpenFile, onRevealNode }: {
   project: Project; ctx: ContextRef[]; onToggle: (r: ReqRef) => void; review: { id: number; seq: number } | null;
+  onOpenFile: (path: string, line?: number) => void; onRevealNode: (view: MapViewId, id: string) => void;
 }) {
   const [list, setList] = useState<RequirementsResponse | null>(null);
   const [proposals, setProposals] = useState<RequirementProposal[]>([]);
@@ -121,6 +122,22 @@ export function PrdView({ project, ctx, onToggle, review }: {
   const attachable = version === undefined && !editing && doc?.content != null;
   const attached = useMemo(() => new Set(ctx.filter(c => !isNodeRef(c)).map(ctxKey)), [ctx]);
   const docName = isPrd ? 'PRD' : summary?.title ?? path.slice(9, -3);
+  // Links in a requirements document: a repository path opens in the Code tab (`#L12` at a line), and
+  // `map:<view>/<node-id>` shows that node on its map. Anything else opens in a new tab, so following
+  // it never leaves Flightdeck. (Raw HTML is not drawn — skipHtml — so writers' comments stay hidden.)
+  const linkComponents = useMemo<Components>(() => ({
+    a: ({ node: _n, href, children, ...props }) => {
+      const target = linkTarget(href ?? '', `${list?.dir ?? REQUIREMENTS_DIR}/${path}`);
+      if (!target) return <a {...props} href={href} target="_blank" rel="noopener noreferrer">{children}</a>;
+      const go = (e: React.MouseEvent) => {
+        e.preventDefault();
+        if (target.kind === 'map') onRevealNode(target.view, target.id);
+        else onOpenFile(target.path, target.line);
+      };
+      return <a {...props} href={href} className="req-link" onClick={go} title={target.kind === 'map' ? `Show on the ${target.view} map` : `Open ${target.path}`}>{children}</a>;
+    },
+  }), [list?.dir, path, onOpenFile, onRevealNode]);
+
   const attachComponents = useMemo<Components>(() => {
     const heading = (Tag: 'h1' | 'h2' | 'h3' | 'h4') => ({ node, children }: { node?: HastNode; children?: ReactNode }) => {
       const text = flatText(node).trim();
@@ -137,7 +154,7 @@ export function PrdView({ project, ctx, onToggle, review }: {
       );
     };
     return {
-      ...MD_COMPONENTS,
+      ...linkComponents,
       h1: heading('h1'), h2: heading('h2'), h3: heading('h3'), h4: heading('h4'),
       li: ({ node, children }) => {
         const text = flatText(node as HastNode).trim();
@@ -153,7 +170,7 @@ export function PrdView({ project, ctx, onToggle, review }: {
         );
       },
     };
-  }, [path, docName, attached, onToggle]);
+  }, [path, docName, attached, onToggle, linkComponents]);
   return (
     <div className="req">
       <nav className="req-nav" aria-label="Requirements">
@@ -283,7 +300,9 @@ export function PrdView({ project, ctx, onToggle, review }: {
           ) : !doc ? (
             <div className="prd-empty muted">Loading…</div>
           ) : shown !== null ? (
-            <article className="prd md"><Markdown remarkPlugins={[remarkGfm]} components={attachable ? attachComponents : MD_COMPONENTS} skipHtml>{shown}</Markdown></article>
+            <article className="prd md">
+              <Markdown remarkPlugins={[remarkGfm]} components={attachable ? attachComponents : linkComponents} skipHtml urlTransform={keepMapLinks}>{shown}</Markdown>
+            </article>
           ) : noFile && isPrd ? (
             <div className="prd-empty">
               <p><strong>No requirements document yet.</strong></p>
@@ -337,6 +356,9 @@ function NewFeature({ docs, disabled, onCreate, onOpen }: {
     </form>
   );
 }
+
+// `map:` isn't a scheme react-markdown keeps by default; everything else gets its usual cleaning.
+const keepMapLinks = (url: string) => (url.startsWith('map:') ? url : defaultUrlTransform(url));
 
 type HastNode = { type?: string; value?: string; children?: HastNode[] };
 const flatText = (n?: HastNode): string => (!n ? '' : n.type === 'text' ? n.value ?? '' : (n.children ?? []).map(flatText).join(''));
@@ -422,9 +444,3 @@ function ProposalReview({ project, proposal, onClose, onDecided }: {
     </div>
   );
 }
-
-// Raw HTML is not drawn (skipHtml): the comments that guide writers stay out of the reading view.
-// Links open in a new tab, as in the chat: following one must not leave Flightdeck.
-const MD_COMPONENTS: Components = {
-  a: ({ node: _node, ...props }) => <a {...props} target="_blank" rel="noopener noreferrer" />,
-};

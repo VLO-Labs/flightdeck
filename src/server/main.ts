@@ -23,7 +23,7 @@ import { changedSince, generatorDecision, jobFor, jobForSession, mapsDir, moveMa
 import { viewFile } from './files.ts';
 import {
   RequirementsError, approveRequirement, decideRequirementProposal, getRequirement, listRequirementProposals, listRequirements,
-  resolveRequirementRef, saveRequirement,
+  resolveApprovedRef, resolveRequirementRef, saveRequirement,
 } from './requirements.ts';
 import { projectProcesses, stopProcessGroup } from './processes.ts';
 import { refuseLocal } from './guard.ts';
@@ -345,7 +345,8 @@ app.post('/api/chats/:id/messages', async c => {
     if ('doc' in ref) {
       if (!project) return c.json({ error: 'no such chat' }, 404);
       try {
-        context.push(resolveRequirementRef(project, ref.doc, ref.ref));
+        // Build is given what was approved; Discuss talks about the file as it is.
+        context.push(chat!.mode === 'build' ? resolveApprovedRef(project, ref.doc, ref.ref) : resolveRequirementRef(project, ref.doc, ref.ref));
       } catch (e) {
         if (e instanceof RequirementsError) return c.json({ error: e.message }, 400);
         throw e;

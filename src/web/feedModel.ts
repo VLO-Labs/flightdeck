@@ -64,7 +64,9 @@ export function derive(items: FeedItem[], roots: string[]): Derived {
     if (it.kind === 'user') {
       const label = MODELS.find(m => m.id === it.model)?.label ?? it.model;
       const tag = it.mode ? `${it.mode === 'build' ? 'Build' : 'Discuss'}${label ? ` · ${label}` : ''}` : undefined;
-      blocks.push({ kind: 'user', key, text: it.text, tag, context: it.context?.map(c => c.label) });
+      // Requirements show the revision they went as (Build: the approved one), and whether Flightdeck added them.
+      blocks.push({ kind: 'user', key, text: it.text, tag, context: it.context?.map(c =>
+        `${c.auto ? 'named: ' : ''}${c.label}${c.revision ? ` · ${c.revision.split(';')[0]}` : ''}`) });
     } else if (it.kind === 'run') {
       running = it.status === 'started';
       if (it.status === 'started') lastRun = it.runId;

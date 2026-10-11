@@ -143,7 +143,7 @@ export const FeedItem = z.discriminatedUnion('kind', [
     // Map nodes carry view/nodeId; requirements doc/ref (and the revision they were sent at).
     context: z.array(z.object({
       view: z.string().optional(), nodeId: z.string().optional(), doc: z.string().optional(), ref: z.string().optional(),
-      revision: z.string().optional(), label: z.string(),
+      revision: z.string().optional(), auto: z.boolean().optional(), label: z.string(),
     })).optional(),
   }),
   z.object({ kind: z.literal('claude'), ...base, event: ClaudeEvent }),

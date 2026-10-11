@@ -164,3 +164,27 @@ test('proposals: edits checked like a save, written only on Accept, refused once
   assert.equal(decideRequirementProposal(project, d.id, false).status, 'rejected');
   assert.doesNotMatch(readFileSync(file, 'utf8'), /Mostly\./);
 });
+
+test('Build: the approved text, refusals for unapproved parts, ids named in text, the status line', async () => {
+  const { resolveApprovedRef, approvedRefsIn, requirementsStatusLine } = await import('./requirements.ts');
+  // PRD.md: approved v2 holds BR-001 ("Always.") and BR-002; the file has moved on since. A feature
+  // spec that was never approved (an earlier test removed the folder).
+  mkdirSync(join(repo, 'docs/requirements/features'), { recursive: true });
+  writeFileSync(join(repo, 'docs/requirements/features/checkout.md'), '# Checkout\n- **AC-001** Paid orders are confirmed\n');
+  const r = resolveApprovedRef(project, 'PRD.md', 'BR-001');
+  assert.equal(r.version, 2);
+  assert.match(r.text, /Always\.$/); // the approved wording, not the file's
+  assert.match(r.revision, /^approved v2; the file has unapproved changes since/);
+  writeFileSync(file, readFileSync(file, 'utf8') + '\n### BR-003 · Draft only\n');
+  fails(() => resolveApprovedRef(project, 'PRD.md', 'BR-003'), 400, /isn't in approved v2/);
+  fails(() => resolveApprovedRef(project, 'features/checkout.md', 'AC-001'), 400, /never been approved/);
+
+  const named = approvedRefsIn(project, 'Implement BR-001 and BR-003; see AC-001. BR-001 again. XBR-002 is not an id; ZZ-123 is in no document.', new Set());
+  assert.deepEqual(named.items.map(i => [i.ref, i.auto]), [['BR-001', true]]);
+  assert.deepEqual(named.unapproved.sort(), ['AC-001', 'BR-003']);
+  assert.deepEqual(approvedRefsIn(project, 'BR-001', new Set(['BR-001'])).items, []); // already attached
+
+  const line = requirementsStatusLine(project);
+  assert.match(line, /PRD\.md has unapproved changes since v2/);
+  assert.match(line, /features\/checkout\.md has never been approved/);
+});

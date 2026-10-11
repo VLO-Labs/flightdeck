@@ -74,3 +74,17 @@ test('document paths: the PRD and features/<slug>.md, nothing else', () => {
     assert.ok(!isDocPath(bad), bad);
   assert.equal(featureSlug('  Checkout & Payment! '), 'checkout-payment');
 });
+
+test('links in a document: repository files, lines, map nodes; external links left alone', async () => {
+  const { linkTarget } = await import('./requirements.ts');
+  const doc = 'docs/requirements/features/checkout.md';
+  assert.deepEqual(linkTarget('src/server/rules.ts#L12', doc), { kind: 'file', path: 'src/server/rules.ts', line: 12 });
+  assert.deepEqual(linkTarget('../PRD.md', doc), { kind: 'file', path: 'docs/requirements/PRD.md' });
+  assert.deepEqual(linkTarget('/README.md', doc), { kind: 'file', path: 'README.md' });
+  assert.deepEqual(linkTarget('src/', doc), { kind: 'file', path: 'src/' });
+  // Multi-repo: paths are inside the repository that holds the requirements.
+  assert.deepEqual(linkTarget('src/a.ts', 'api/docs/requirements/PRD.md'), { kind: 'file', path: 'api/src/a.ts' });
+  assert.deepEqual(linkTarget('map:architecture/rules-engine', doc), { kind: 'map', view: 'architecture', id: 'rules-engine' });
+  assert.equal(linkTarget('map:nope/x', doc), null);
+  for (const ext of ['https://example.com', 'mailto:a@b', '#scope', '//cdn.x/y', '']) assert.equal(linkTarget(ext, doc), null, ext);
+});
