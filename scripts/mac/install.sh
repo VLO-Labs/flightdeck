@@ -82,6 +82,15 @@ cat > "$APP_BUNDLE/Contents/Info.plist" <<PLIST
   <key>FDHost</key><string>$HOST_NAME</string>
   <key>FDForwardPort</key><string>8101</string>
   <key>FDBareHost</key><string>flightdeck.vlolabs</string>
+  <!-- macOS blocks an app's plain-http requests to domain names (localhost and IPs are exempt);
+       the app checks http://flightdeck.vlolabs/health before opening it. -->
+  <key>NSAppTransportSecurity</key><dict>
+    <key>NSExceptionDomains</key><dict>
+      <key>flightdeck.vlolabs</key><dict>
+        <key>NSExceptionAllowsInsecureHTTPLoads</key><true/>
+      </dict>
+    </dict>
+  </dict>
   <key>FDLog</key><string>$LOG</string>
 </dict></plist>
 PLIST

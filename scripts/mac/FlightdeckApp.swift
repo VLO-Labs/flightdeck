@@ -123,10 +123,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   // --- Helpers -----------------------------------------------------------------------------------
 
   private func openBrowser() {
-    // Without a port when scripts/mac/port80.sh has given Flightdeck its own address.
-    let bare = "http://\(setting("FDBareHost"))"
-    let target = healthy("\(bare)/health") ? bare : "http://\(host):\(port)"
-    if let url = URL(string: target) { NSWorkspace.shared.open(url) }
+    let bareHost = setting("FDBareHost")
+    // The port-less address exists when scripts/mac/port80.sh has set it up (an /etc/hosts entry).
+    let hosts = (try? String(contentsOfFile: "/etc/hosts", encoding: .utf8)) ?? ""
+    let hasBare = !bareHost.isEmpty && hosts.contains(bareHost)
+    DispatchQueue.global().async {
+      var target = "http://\(self.host):\(self.port)"
+      if hasBare {
+        // Its listener comes up a moment after the main one: give it a couple of seconds.
+        for _ in 0..<15 {
+          if self.healthy("http://\(bareHost)/health") { target = "http://\(bareHost)"; break }
+          usleep(200_000)
+        }
+      }
+      DispatchQueue.main.async { if let url = URL(string: target) { NSWorkspace.shared.open(url) } }
+    }
   }
 
   private func serverUp() -> Bool { healthy("http://127.0.0.1:\(port)/health") }
