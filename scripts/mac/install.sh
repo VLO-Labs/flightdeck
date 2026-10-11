@@ -24,6 +24,15 @@ NODE="$(command -v node)" || { echo "node not found" >&2; exit 1; }
 CLAUDE="$HOME/.local/bin/claude"
 [ -x "$CLAUDE" ] || { echo "Claude Code not found at $CLAUDE (install it and run 'claude' once to log in)" >&2; exit 1; }
 
+# Never under a busy server: updating replaces its files (node_modules included) and restarts it,
+# which would end a chat turn or map refresh in flight. Claude runs as the server's child.
+SERVER_PID="$(lsof -ti "tcp:$PORT" -sTCP:LISTEN 2>/dev/null | head -1)"
+if [ -n "$SERVER_PID" ] && pgrep -P "$SERVER_PID" -f claude >/dev/null 2>&1; then
+  echo "! Flightdeck is busy (a chat turn or map refresh is running). Nothing was changed;" >&2
+  echo "  run this again when it's idle." >&2
+  exit 1
+fi
+
 echo "→ copying the app to $HOME_DIR/app"
 mkdir -p "$HOME_DIR/app" "$HOME_DIR/data" "$HOME/Library/Logs" "$APPS"
 rsync -a --delete --exclude .git --exclude .env --exclude node_modules --exclude dist --exclude data "$REPO/" "$HOME_DIR/app/"
@@ -81,7 +90,7 @@ rm -rf "$ICON_TMP"
 touch "$APP_BUNDLE"
 
 # Pick up the new code if the server was running.
-if lsof -ti "tcp:$PORT" -sTCP:LISTEN >/dev/null 2>&1; then
+if [ -n "$SERVER_PID" ]; then
   echo "→ restarting the running server"
   "$REPO/scripts/mac/stop.sh" >/dev/null
   open "$APP_BUNDLE"
