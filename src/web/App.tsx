@@ -60,12 +60,13 @@ export function App() {
           {projects.length === 0 && <option value="">No projects yet</option>}
           {projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
         </select>
-        <div className="row-between">
-          <button className="link" onClick={() => setAdding(a => (a === 'new' ? null : 'new'))}>{adding === 'new' ? 'Cancel' : '+ New project'}</button>
-          <button className="link" onClick={() => setAdding(a => (a === 'existing' ? null : 'existing'))}>{adding === 'existing' ? 'Cancel' : '+ Add existing'}</button>
+        <div className="row-between project-actions">
+          <button className={`link ${adding === 'new' ? 'active' : ''}`} aria-expanded={adding === 'new'} onClick={() => setAdding(a => (a === 'new' ? null : 'new'))}>+ New project</button>
+          <button className={`link ${adding === 'existing' ? 'active' : ''}`} aria-expanded={adding === 'existing'} onClick={() => setAdding(a => (a === 'existing' ? null : 'existing'))}>+ Add existing</button>
         </div>
         {adding === 'existing' && (
           <AddProject
+            onCancel={() => setAdding(null)}
             onAdded={p => {
               setProjects(ps => [...ps, p]);
               setProjectId(p.id);
@@ -75,6 +76,7 @@ export function App() {
         )}
         {adding === 'new' && (
           <NewProject
+            onCancel={() => setAdding(null)}
             onCreated={(p, chatId, err) => {
               // The project exists even if the scaffold turn couldn't start; the chat can be resent.
               if (err) setError(`Project created, but the scaffold didn't start: ${err}`);
@@ -88,9 +90,10 @@ export function App() {
 
         {project && (
           <>
-            <button className={`link ${view.kind === 'map' ? 'active' : ''}`} onClick={() => setView({ kind: 'map' })}>
-              Map
-            </button>
+            <nav className="side-nav">
+              <button className={`nav-item ${view.kind === 'map' ? 'active' : ''}`} onClick={() => setView({ kind: 'map' })}>Map</button>
+              <button className={`nav-item ${view.kind === 'rules' ? 'active' : ''}`} onClick={() => setView({ kind: 'rules' })}>Project settings</button>
+            </nav>
             <div className="row-between">
               <label className="label">Chats</label>
               <button
@@ -116,10 +119,8 @@ export function App() {
                   {c.holdsEditLock && <span className="badge lock" title="This chat is changing code; other chats can't edit until it finishes">editing</span>}
                 </button>
               ))}
+              {chats.length === 0 && <div className="muted side-empty">No chats yet.</div>}
             </nav>
-            <button className={`link ${view.kind === 'rules' ? 'active' : ''}`} onClick={() => setView({ kind: 'rules' })}>
-              Project settings
-            </button>
             <div className="path" title={project.path}>{project.path}</div>
           </>
         )}
@@ -162,7 +163,7 @@ export function App() {
   );
 }
 
-function AddProject({ onAdded }: { onAdded: (p: Project) => void }) {
+function AddProject({ onAdded, onCancel }: { onAdded: (p: Project) => void; onCancel: () => void }) {
   const [path, setPath] = useState('/home/vlolabs/dev/');
   const [name, setName] = useState('');
   const [error, setError] = useState('');
@@ -184,7 +185,10 @@ function AddProject({ onAdded }: { onAdded: (p: Project) => void }) {
       <button type="button" className="small" onClick={() => setBrowsing(b => !b)}>{browsing ? 'Close browser' : 'Browse…'}</button>
       {browsing && <FolderBrowser onChoose={p => { setPath(p); setBrowsing(false); }} />}
       <input value={name} onChange={e => setName(e.target.value)} placeholder="Name (defaults to folder)" />
-      <button type="submit">Add</button>
+      <div className="form-actions">
+        <button type="submit">Add project</button>
+        <button type="button" className="ghost" onClick={onCancel}>Cancel</button>
+      </div>
       {error && <div className="error">{error}</div>}
     </form>
   );
@@ -220,7 +224,7 @@ function FolderBrowser({ onChoose }: { onChoose: (path: string) => void }) {
 
 const slug = (s: string) => s.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
 
-function NewProject({ onCreated }: { onCreated: (p: Project, chatId: number, error?: string) => void }) {
+function NewProject({ onCreated, onCancel }: { onCreated: (p: Project, chatId: number, error?: string) => void; onCancel: () => void }) {
   const [name, setName] = useState('');
   // The folder follows the name until it's edited by hand.
   const [path, setPath] = useState<string | null>(null);
@@ -252,7 +256,10 @@ function NewProject({ onCreated }: { onCreated: (p: Project, chatId: number, err
         {STACKS.map(s => <option key={s.id} value={s.id}>{s.label}</option>)}
       </select>
       <textarea value={description} onChange={e => setDescription(e.target.value)} placeholder="What is it? (optional, goes to Claude)" rows={3} />
-      <button type="submit" disabled={busy || !slug(name)}>Create and scaffold</button>
+      <div className="form-actions">
+        <button type="submit" disabled={busy || !slug(name)}>{busy ? 'Creating…' : 'Create and scaffold'}</button>
+        <button type="button" className="ghost" onClick={onCancel}>Cancel</button>
+      </div>
       {error && <div className="error">{error}</div>}
     </form>
   );

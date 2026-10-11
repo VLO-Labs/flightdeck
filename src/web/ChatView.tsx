@@ -140,7 +140,7 @@ export function ChatView({ chat, project, onChanged, initialContext }: {
             className={`small ${showMap ? '' : 'ghost'}`}
             onClick={() => setShowMap(v => { storageSet('fd.chatmap', v ? '0' : '1'); return !v; })}
           >
-            {showMap ? 'Hide map' : 'Map'}
+            {showMap ? 'Hide map' : 'Show map'}
           </button>
         </div>
       </header>
@@ -156,6 +156,13 @@ export function ChatView({ chat, project, onChanged, initialContext }: {
           else scrollMemory.set(chat.id, el.scrollTop);
         }}
       >
+        {items.length === 0 && (
+          <div className="feed-empty muted">
+            {connected
+              ? <>Ask about the code, plan a change, or say what to build. Click boxes on the map (<em>Show map</em>) to attach them as context. {cur.mode === 'discuss' ? 'This chat is in Discuss, so nothing gets edited until you switch it to Build.' : ''}</>
+              : 'Loading…'}
+          </div>
+        )}
         {rows.map(r => {
           if (r.kind === 'group') {
             const open = openGroups.has(r.key);

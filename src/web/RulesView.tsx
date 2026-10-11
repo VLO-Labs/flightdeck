@@ -83,7 +83,7 @@ export function RulesView({ project, onProjectChanged }: { project: Project; onP
         const rows = rules.filter(r => r.bucket === b.id);
         return (
           <section key={b.id} className={`bucket ${b.id}`}>
-            <h3>{b.title} <span className="muted">— {b.help}</span></h3>
+            <h3>{b.title} <span className="bucket-help">— {b.help}</span></h3>
             {rows.length === 0 && <div className="muted">No rules.</div>}
             {rows.map(r => (
               <div key={r.id} className="rule">

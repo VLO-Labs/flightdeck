@@ -126,7 +126,8 @@ export function MapView({ project, onAskInChat }: { project: Project; onAskInCha
 
       <div className="map-body">
         <div className="map-canvas">
-          {!map && !running && (
+          {!data && !error && <div className="empty">Loading map…</div>}
+          {data && !map && !running && (
             <div className="empty">
               <div>
                 <p>No {MAP_VIEWS.find(v => v.id === view)!.label.toLowerCase()} map yet.</p>
