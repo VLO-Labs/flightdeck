@@ -11,6 +11,9 @@ import { cancelPendingForRun, releaseLockForChat } from './hook.ts';
 import { MCP_SERVER } from './mcp.ts';
 import { approvedVersion, currentMaps, planStatusLine } from './plans.ts';
 import { planAsText } from '../shared/plan.ts';
+import { proposalStatusLine, type RequirementContextItem } from './requirements.ts';
+
+const proposals = (chatId: number) => { const l = proposalStatusLine(chatId); return l ? `\n${l}` : ''; };
 
 type Active = {
   runId: number; chatId: number; projectId: number; mode: Mode; proc: ChildProcess; stopRequested: boolean;
@@ -47,7 +50,14 @@ const DISCUSS_PROMPT =
   'approve. Base it on the current maps: get_maps returns their node ids. When the user asks for ' +
   'changes to the plan, call the tool again with the whole revised plan; if they ask to drop it, use ' +
   'drop_plan. You cannot approve a plan: the user does that in Flightdeck. Keep your text reply short: ' +
-  'the user reads the plan on the map.';
+  'the user reads the plan on the map.\n\n' +
+  'The project\'s requirements (a PRD and feature specs, Markdown in docs/requirements) say what the ' +
+  'software must do. get_requirements lists them with their state and requirement ids; read them with ' +
+  'Read. You cannot write them: to change one, call propose_requirements_edit with exact replacements ' +
+  '(or the whole text, for a new document) and a short summary. The user reviews the change as a diff ' +
+  'and accepts or rejects it; accepting makes a draft, which they approve separately. Ids (BR-001, ' +
+  'AC-001) never change and are never reused: add new ones above the highest, and mark ones that no ' +
+  'longer apply "(retired)" instead of deleting them.';
 
 // Every turn states its mode: a resumed session still holds the earlier Discuss turns (and the
 // agent's own "switch to Build to implement" replies), so without this a Build turn reads as Discuss.
@@ -111,6 +121,7 @@ function childEnv(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
 }
 
 type ContextNode = { view: string; nodeId: string; label: string; kind: string; summary: string; files: string[] };
+export type ContextItem = ContextNode | RequirementContextItem;
 
 // A resumed session keeps the system prompt of its FIRST turn: --append-system-prompt on later turns
 // is ignored (seen 2026-10-11, Claude Code 2.1.296). So the turn's mode, and an approved plan, also
@@ -119,16 +130,25 @@ function modeBlock(prompt: string): string {
   return `[Flightdeck: instructions for this turn — they replace any earlier Flightdeck mode instructions]\n${prompt}\n[End of Flightdeck instructions. The user's message follows.]\n\n`;
 }
 
-// The block the agent sees above the user's message for each attached map node — built from the
-// map file on disk, so the UI can only point at nodes, never inject text.
-function contextBlock(nodes: ContextNode[]): string {
-  if (nodes.length === 0) return '';
-  const lines = nodes.map(n =>
-    `- ${n.label} (${n.kind}, ${n.view} view): ${n.summary}\n  files: ${n.files.join(', ') || '(none recorded)'}`);
-  return `[Flightdeck: the user attached these parts of the project map to this message]\n${lines.join('\n')}\n\n`;
+// The blocks the agent sees above the user's message for what was attached: map nodes, from the map
+// files; requirements, from the documents — both read on disk, so the UI can only point, never inject text.
+function contextBlock(items: ContextItem[]): string {
+  const nodes = items.filter((c): c is ContextNode => 'view' in c);
+  const reqs = items.filter((c): c is RequirementContextItem => 'doc' in c);
+  let out = '';
+  if (nodes.length) {
+    const lines = nodes.map(n =>
+      `- ${n.label} (${n.kind}, ${n.view} view): ${n.summary}\n  files: ${n.files.join(', ') || '(none recorded)'}`);
+    out += `[Flightdeck: the user attached these parts of the project map to this message]\n${lines.join('\n')}\n\n`;
+  }
+  if (reqs.length) {
+    const blocks = reqs.map(r => `--- ${r.label} — ${r.doc} (${r.revision})\n${r.text}`);
+    out += `[Flightdeck: the user attached these requirements to this message, as the files read now]\n${blocks.join('\n\n')}\n--- end of attached requirements\n\n`;
+  }
+  return out;
 }
 
-export function startTurn(chatId: number, text: string, context: ContextNode[] = []): { ok: true } | { ok: false; error: string } {
+export function startTurn(chatId: number, text: string, context: ContextItem[] = []): { ok: true } | { ok: false; error: string } {
   if (active.has(chatId)) return { ok: false, error: 'this chat is already running' };
   const chat = db.select().from(chats).where(eq(chats.id, chatId)).get();
   if (!chat) return { ok: false, error: 'no such chat' };
@@ -146,7 +166,7 @@ export function startTurn(chatId: number, text: string, context: ContextNode[] =
     .get();
 
   // The agent can't see Flightdeck's UI, so each turn says where the chat's plan stands.
-  const prompt = mode === 'discuss' ? `${DISCUSS_PROMPT}\n\n${planStatusLine(chatId)}`
+  const prompt = mode === 'discuss' ? `${DISCUSS_PROMPT}\n\n${planStatusLine(chatId)}${proposals(chatId)}`
     : approved ? `${BUILD_PROMPT}\n\n${PLAN_PROMPT}\n\n${planAsText(approved.body, approved.version, currentMaps(project))}`
     : `${BUILD_PROMPT}\n\n${planStatusLine(chatId)}`;
   const args = [
@@ -177,7 +197,9 @@ export function startTurn(chatId: number, text: string, context: ContextNode[] =
 
   feed.append(chatId, {
     kind: 'user', at: now(), runId: run.id, text, mode, model,
-    context: context.length ? context.map(c => ({ view: c.view, nodeId: c.nodeId, label: c.label })) : undefined,
+    context: context.length ? context.map(c => ('view' in c
+      ? { view: c.view, nodeId: c.nodeId, label: c.label }
+      : { doc: c.doc, ref: c.ref, revision: c.revision, label: c.label })) : undefined,
   });
   feed.append(chatId, { kind: 'run', at: now(), runId: run.id, status: 'started' });
 

@@ -1,21 +1,28 @@
 // The workspace's PRD tab (PLAN.md §11): the project's requirements — the PRD and one spec per
 // feature — read as documents, edited as plain Markdown, approved revision by revision. The files live
 // in the repository (docs/requirements); Flightdeck keeps what was approved, so a later edit is a new
-// draft and never changes an approved version.
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+// draft and never changes an approved version. Any requirement or section can be attached to the
+// chat's next message; edits the agent proposes from a Discuss chat are reviewed here as a diff.
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import Markdown, { type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import type { Project, RequirementDoc, RequirementDocSummary, RequirementsResponse } from '../shared/contracts.ts';
-import { FEATURE_TEMPLATE, PRD_FILE, PRD_TEMPLATE, featureSlug, nextId, parseRequirements } from '../shared/requirements.ts';
+import type { Project, RequirementDoc, RequirementDocSummary, RequirementProposal, RequirementsResponse } from '../shared/contracts.ts';
+import { FEATURE_TEMPLATE, ID_PATTERN, PRD_FILE, PRD_TEMPLATE, featureSlug, nextId, parseRequirements } from '../shared/requirements.ts';
+import { diffLines, hunks } from '../shared/diff.ts';
 import { ApiError, api } from './api.ts';
+import { ctxKey, isNodeRef, type ContextRef, type ReqRef } from './workspace.ts';
 
 // An edit in progress, kept while you look at another tab or chat: per project and document.
 type Editing = { text: string; baseHash: string | null };
 const edits = new Map<string, Editing>();
 const lastDoc = new Map<number, string>(); // per project: the document last open
 
-export function PrdView({ project }: { project: Project }) {
+export function PrdView({ project, ctx, onToggle, review }: {
+  project: Project; ctx: ContextRef[]; onToggle: (r: ReqRef) => void; review: { id: number; seq: number } | null;
+}) {
   const [list, setList] = useState<RequirementsResponse | null>(null);
+  const [proposals, setProposals] = useState<RequirementProposal[]>([]);
+  const [reviewing, setReviewing] = useState<number | null>(null);
   const [path, setPath] = useState(() => lastDoc.get(project.id) ?? PRD_FILE);
   const [doc, setDoc] = useState<RequirementDoc | null>(null);
   const [version, setVersion] = useState<number | undefined>(); // an approved version being read
@@ -29,7 +36,12 @@ export function PrdView({ project }: { project: Project }) {
 
   useEffect(() => { lastDoc.set(project.id, path); setEditingState(edits.get(key) ?? null); setConflict(null); setError(''); }, [key]);
 
-  const loadList = useCallback(() => api.requirements(project.id).then(setList).catch(e => setError((e as Error).message)), [project.id]);
+  const loadList = useCallback(() => Promise.all([
+    api.requirements(project.id).then(setList),
+    api.proposals(project.id).then(setProposals),
+  ]).catch(e => setError((e as Error).message)), [project.id]);
+  // A proposal card's "Review" in the chat opens it here.
+  useEffect(() => { if (review) { setReviewing(review.id); void loadList(); } }, [review?.seq]);
   const loadDoc = useCallback(() => {
     api.requirement(project.id, path, version).then(setDoc).catch(e => setError((e as Error).message));
   }, [project.id, path, version]);
@@ -53,7 +65,7 @@ export function PrdView({ project }: { project: Project }) {
   const allIds = useMemo(() => list?.docs.flatMap(d => d.ids) ?? [], [list]);
   const isPrd = path === PRD_FILE;
 
-  const open = (p: string) => { setVersion(undefined); setPath(p); };
+  const open = (p: string) => { setVersion(undefined); setReviewing(null); setPath(p); };
   const startNew = (p: string, text: string) => { open(p); edits.set(`${project.id}:${p}`, { text, baseHash: null }); };
 
   const save = async (baseHash: string | null) => {
@@ -104,6 +116,44 @@ export function PrdView({ project }: { project: Project }) {
   };
 
   const noFile = doc && doc.content === null;
+
+  // Reading the file as it is now: every requirement and section can be attached to the message.
+  const attachable = version === undefined && !editing && doc?.content != null;
+  const attached = useMemo(() => new Set(ctx.filter(c => !isNodeRef(c)).map(ctxKey)), [ctx]);
+  const docName = isPrd ? 'PRD' : summary?.title ?? path.slice(9, -3);
+  const attachComponents = useMemo<Components>(() => {
+    const heading = (Tag: 'h1' | 'h2' | 'h3' | 'h4') => ({ node, children }: { node?: HastNode; children?: ReactNode }) => {
+      const text = flatText(node).trim();
+      const id = leadId(text);
+      const r: ReqRef = id
+        ? { doc: path, ref: id, label: text.replace(/\s*·\s*/, ' ').slice(0, 80) }
+        : { doc: path, ref: `§${text}`, label: `${docName} § ${text}`.slice(0, 80) };
+      const on = attached.has(ctxKey(r));
+      return (
+        <Tag className={`req-target ${on ? 'req-attached' : ''}`}>
+          {children}
+          <AttachButton on={on} what={id ?? `section “${text}”`} onClick={() => onToggle(r)} />
+        </Tag>
+      );
+    };
+    return {
+      ...MD_COMPONENTS,
+      h1: heading('h1'), h2: heading('h2'), h3: heading('h3'), h4: heading('h4'),
+      li: ({ node, children }) => {
+        const text = flatText(node as HastNode).trim();
+        const id = leadId(text);
+        if (!id) return <li>{children}</li>;
+        const r: ReqRef = { doc: path, ref: id, label: text.slice(0, 80) };
+        const on = attached.has(ctxKey(r));
+        return (
+          <li className={`req-target ${on ? 'req-attached' : ''}`}>
+            {children}
+            <AttachButton on={on} what={id} onClick={() => onToggle(r)} />
+          </li>
+        );
+      },
+    };
+  }, [path, docName, attached, onToggle]);
   return (
     <div className="req">
       <nav className="req-nav" aria-label="Requirements">
@@ -120,6 +170,20 @@ export function PrdView({ project }: { project: Project }) {
         ))}
         {!list?.docs.some(d => d.path === path) && <div className="req-doc-item active"><span className="req-doc-name">{path.slice(9, -3)}</span><span className="badge">new</span></div>}
         <NewFeature disabled={Boolean(editing)} docs={list?.docs ?? []} onCreate={(p, name) => startNew(p, FEATURE_TEMPLATE(name))} onOpen={open} />
+        {proposals.some(x => x.status === 'open') && (
+          <>
+            <div className="req-nav-h">Proposed edits</div>
+            {proposals.filter(x => x.status === 'open').map(x => (
+              <button
+                key={x.id} className={`req-doc-item ${reviewing === x.id ? 'active' : ''}`} disabled={Boolean(editing)}
+                title={`${x.summary}\nfrom “${x.chatTitle}”`} onClick={() => setReviewing(x.id)}
+              >
+                <span className="req-doc-name">#{x.id} {x.path === PRD_FILE ? 'PRD' : x.path.slice(9, -3)}</span>
+                <span className="badge warn">review</span>
+              </button>
+            ))}
+          </>
+        )}
         {outline.length > 0 && (
           <>
             <div className="req-nav-h">Outline</div>
@@ -132,6 +196,13 @@ export function PrdView({ project }: { project: Project }) {
         )}
       </nav>
 
+      {reviewing !== null ? (
+        <ProposalReview
+          key={reviewing} project={project} proposal={proposals.find(x => x.id === reviewing)}
+          onClose={() => setReviewing(null)}
+          onDecided={(x, accepted) => { void loadList(); if (accepted) { setReviewing(null); setVersion(undefined); setPath(x.path); loadDoc(); } }}
+        />
+      ) : (
       <div className="req-main">
         <div className="req-bar">
           <span className="mono muted req-path" title={`${list?.dir ?? ''}/${path}`}>{list?.dir}/{path}</span>
@@ -212,7 +283,7 @@ export function PrdView({ project }: { project: Project }) {
           ) : !doc ? (
             <div className="prd-empty muted">Loading…</div>
           ) : shown !== null ? (
-            <article className="prd md"><Markdown remarkPlugins={[remarkGfm]} components={MD_COMPONENTS} skipHtml>{shown}</Markdown></article>
+            <article className="prd md"><Markdown remarkPlugins={[remarkGfm]} components={attachable ? attachComponents : MD_COMPONENTS} skipHtml>{shown}</Markdown></article>
           ) : noFile && isPrd ? (
             <div className="prd-empty">
               <p><strong>No requirements document yet.</strong></p>
@@ -229,6 +300,7 @@ export function PrdView({ project }: { project: Project }) {
           )}
         </div>
       </div>
+      )}
     </div>
   );
 }
@@ -263,6 +335,91 @@ function NewFeature({ docs, disabled, onCreate, onOpen }: {
         <button type="button" className="small ghost" onClick={() => setName(null)}>Cancel</button>
       </div>
     </form>
+  );
+}
+
+type HastNode = { type?: string; value?: string; children?: HastNode[] };
+const flatText = (n?: HastNode): string => (!n ? '' : n.type === 'text' ? n.value ?? '' : (n.children ?? []).map(flatText).join(''));
+const LEAD = new RegExp(`^(${ID_PATTERN.source})(?![\\w-])`);
+const leadId = (text: string) => LEAD.exec(text)?.[1] ?? null;
+
+function AttachButton({ on, what, onClick }: { on: boolean; what: string; onClick: () => void }) {
+  return (
+    <button
+      className={`req-attach ${on ? 'on' : ''}`} aria-pressed={on} onClick={onClick}
+      title={on ? `Remove ${what} from your message` : `Attach ${what} to your message`}
+    >
+      {on ? '✓ in message' : '+ chat'}
+    </button>
+  );
+}
+
+// An edit the agent proposed: what it says, the change as a diff against the file now, Accept / Reject.
+function ProposalReview({ project, proposal, onClose, onDecided }: {
+  project: Project; proposal?: RequirementProposal; onClose: () => void; onDecided: (p: RequirementProposal, accepted: boolean) => void;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const [p, setP] = useState(proposal);
+  useEffect(() => { if (proposal) setP(proposal); }, [proposal]);
+  const diff = useMemo(() => (p ? hunks(diffLines(p.current ?? '', p.content)) : []), [p]);
+  if (!p) return <div className="req-main"><div className="prd-empty muted">Loading the proposal…</div></div>;
+  const stale = p.status === 'open' && p.baseHash !== p.currentHash;
+  const decide = async (accept: boolean) => {
+    setBusy(true);
+    setError('');
+    try {
+      const r = await api.decideProposal(project.id, p.id, accept);
+      setP(r);
+      onDecided(r, accept);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  const added = diff.reduce((n, h) => n + ('lines' in h ? h.lines.filter(l => l.op === 'add').length : 0), 0);
+  const removed = diff.reduce((n, h) => n + ('lines' in h ? h.lines.filter(l => l.op === 'del').length : 0), 0);
+  return (
+    <div className="req-main">
+      <div className="req-bar">
+        <span><strong>Proposed edit #{p.id}</strong> <span className="mono muted">{p.path}</span></span>
+        <span className={`badge ${p.status === 'open' ? 'warn' : p.status === 'accepted' ? 'good' : ''}`}>{p.status}</span>
+        <span className="muted">+{added} −{removed}</span>
+        <span className="req-bar-spacer" />
+        {p.status === 'open' && (
+          <>
+            <button className="small ghost" disabled={busy} onClick={() => decide(false)}>Reject</button>
+            <button className="small" disabled={busy || stale} title={stale ? 'The document changed since this was proposed.' : 'Write this into the file as a draft revision; approving it is a separate step.'} onClick={() => decide(true)}>Accept</button>
+          </>
+        )}
+        <button className="small ghost" onClick={onClose}>Close</button>
+      </div>
+      <div className="req-note">
+        {p.summary} <span className="muted">— from “{p.chatTitle}”, {new Date(p.createdAt).toLocaleString([], { dateStyle: 'short', timeStyle: 'short' })}</span>
+      </div>
+      {p.status === 'open' && !stale && (
+        <div className="req-note muted">Accepting writes it to the file as a draft. Approved versions don't change; you approve the new revision separately.</div>
+      )}
+      {stale && <div className="req-note warn">The document changed since this was proposed, so it can't be applied as is. Reject it and ask the agent to propose again against the current text.</div>}
+      {p.current === null && p.status === 'open' && <div className="req-note">A new document.</div>}
+      {error && <div className="req-note bad" role="alert">{error}</div>}
+      <div className="req-body">
+        <div className="req-diff mono" role="table" aria-label="Proposed changes">
+          {diff.length === 0 && <div className="muted">No changes.</div>}
+          {diff.map((h, i) => 'skipped' in h
+            ? <div key={i} className="req-diff-skip">⋯ {h.skipped} unchanged line{h.skipped > 1 ? 's' : ''}</div>
+            : h.lines.map((l, j) => (
+                <div key={`${i}:${j}`} className={`req-diff-line ${l.op}`} role="row">
+                  <span className="req-diff-n" aria-hidden="true">{l.op === 'add' ? '' : l.a}</span>
+                  <span className="req-diff-n" aria-hidden="true">{l.op === 'del' ? '' : l.b}</span>
+                  <span className="req-diff-sign" aria-label={l.op === 'add' ? 'added' : l.op === 'del' ? 'removed' : undefined}>{l.op === 'add' ? '+' : l.op === 'del' ? '−' : ' '}</span>
+                  <span className="req-diff-text">{l.text || ' '}</span>
+                </div>
+              )))}
+        </div>
+      </div>
+    </div>
   );
 }
 

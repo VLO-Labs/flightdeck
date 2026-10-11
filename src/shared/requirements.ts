@@ -190,3 +190,21 @@ export const FEATURE_TEMPLATE = (name: string) => `# ${name}
 - **AC-###** Given …, when …, then …
 -->
 `;
+
+// The part of a document a reference names: a requirement id (BR-001), or a section by its heading
+// (`§Scope`) — the heading to the next heading of its level or above. Null when it isn't there.
+export function findRef(md: string, ref: string): { label: string; text: string; retired?: boolean } | null {
+  const parsed = parseRequirements(md);
+  if (!ref.startsWith('§')) {
+    const it = parsed.items.find(i => i.id === ref);
+    return it ? { label: `${it.id} ${it.title}`.trim(), text: it.text, retired: it.retired } : null;
+  }
+  const title = ref.slice(1).trim();
+  const at = parsed.outline.findIndex(o => !o.id && o.title === title);
+  if (at === -1) return null;
+  const head = parsed.outline[at]!;
+  const next = parsed.outline.slice(at + 1).find(o => o.level <= head.level);
+  const lines = md.split('\n');
+  const text = lines.slice(head.line - 1, next ? next.line - 1 : lines.length).join('\n').trimEnd();
+  return { label: `§ ${title}`, text };
+}

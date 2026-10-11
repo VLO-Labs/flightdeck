@@ -493,5 +493,20 @@ can discuss it. `CLAUDE.md` stays the engineering instructions; the PRD says wha
    compared case-insensitively and through symlinks) — verified live: a Build turn's `Edit` of
    `PRD.md` was refused and the file was untouched. Shell writes aren't blocked there; the hash check
    shows them as *changed since vN*, and Build (phase 5) is to use the approved text. Nothing commits.
-4. Contextual conversations: click a rule to attach it; agent-proposed edits to accept or reject.
+4. **Contextual conversations — BUILT 2026-10-11.** In the PRD tab every heading and every id'd list
+   item has a quiet *+ chat* (on hover or focus) that attaches it to the chat's next message, beside map
+   nodes in the same chip row. The message carries only `{doc, ref}` (an id, or `§Heading` for a
+   section); the server reads that part from the file and puts it above the message with the revision
+   it is (*approved v2*, *draft: changed since approved v2*, *draft, never approved*), capped at 8 KB;
+   a ref that's gone is refused. Discuss turns get two more MCP tools: `get_requirements` (documents,
+   state, ids) and `propose_requirements_edit` (Edit-style `old_string`/`new_string` replacements, or a
+   whole text for a new document). A proposal is checked like a save (ids, paths) and stored in
+   `requirement_proposals` with the hash it was made against; it writes nothing. The chat shows a card
+   with *Review*; the PRD tab lists open proposals and shows each as a line diff with Accept / Reject.
+   Accept goes through the same checked save, so a document that moved on since is refused ("ask for
+   a new proposal"); the result is a draft revision — approval stays a separate click. A newer
+   proposal from the same chat for the same document supersedes the open one, and each Discuss turn is
+   told what became of its recent proposals. Verified live (Haiku, Discuss): with BR-001 attached the
+   agent quoted it without reading the file, proposed the change through the tool, and Accept wrote it
+   as *changed since v2*.
 5. Build gets the approved relevant requirements (with their revision); links to maps and files.

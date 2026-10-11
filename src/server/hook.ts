@@ -64,13 +64,14 @@ export async function decide(p: HookPayload): Promise<Answer> {
 
   const isEdit = EDIT_TOOLS.has(p.tool_name);
 
-  // Flightdeck's own tools read the maps or save a plan version, nothing else (the tools re-check
+  // Flightdeck's own tools read the maps and requirements, or save a plan version or a requirements
+  // proposal, nothing else (the tools re-check
   // Discuss mode themselves). ToolSearch only loads tool descriptions, which is how Claude Code
   // brings MCP tools in; a card for it would stall every plan.
   if (FLIGHTDECK_TOOLS.has(p.tool_name)) {
-    if (run.mode !== 'discuss') return { decision: 'deny', reason: 'Plans are proposed in Discuss mode.' };
-    record(run.runId, p, 'allowed', 'mode', undefined, 'Flightdeck plan tool');
-    return { decision: 'allow', reason: 'Flightdeck plan tool' };
+    if (run.mode !== 'discuss') return { decision: 'deny', reason: 'Plans and requirements changes are proposed in Discuss mode.' };
+    record(run.runId, p, 'allowed', 'mode', undefined, 'Flightdeck tool');
+    return { decision: 'allow', reason: 'Flightdeck tool' };
   }
   if (p.tool_name === 'ToolSearch') {
     record(run.runId, p, 'allowed', 'mode', undefined, 'loads tool descriptions only');

@@ -6,9 +6,10 @@ import { createHash, randomBytes } from 'node:crypto';
 import { closeSync, existsSync, fsyncSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, writeSync } from 'node:fs';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { and, desc, eq } from 'drizzle-orm';
-import type { RequirementDoc, RequirementDocSummary, RequirementsResponse } from '../shared/contracts.ts';
-import { PRD_FILE, REQUIREMENTS_DIR, checkRevision, isDocPath, parseRequirements } from '../shared/requirements.ts';
-import { db, requirementApprovals } from './db.ts';
+import type { ProposeRequirementsEdit, RequirementDoc, RequirementDocSummary, RequirementProposal, RequirementsResponse } from '../shared/contracts.ts';
+import { PRD_FILE, REQUIREMENTS_DIR, checkRevision, findRef, isDocPath, parseRequirements } from '../shared/requirements.ts';
+import { applyEdits } from '../shared/diff.ts';
+import { db, chats, requirementApprovals, requirementProposals } from './db.ts';
 import { git } from './maps.ts';
 
 type ProjectLike = { id: number; path: string; mapsRepo: string | null };
@@ -203,4 +204,125 @@ export function isRequirementsPath(p: ProjectLike & { realPath?: string }, file:
     }
   }
   return false;
+}
+
+// --- Context: a requirement or section attached to a message ------------------------------------
+
+export type RequirementContextItem = { doc: string; ref: string; label: string; revision: string; text: string };
+const CONTEXT_MAX = 8000;
+
+// Read the attached part from the file as it is now, and say which revision that is: Discuss talks
+// about the current text; what Build implements is a separate question (approved versions).
+export function resolveRequirementRef(p: ProjectLike, doc: string, ref: string): RequirementContextItem {
+  const cur = readCurrent(p, doc);
+  if (!cur) throw new RequirementsError(`${doc} doesn't exist`, 404);
+  const found = findRef(cur.content, ref);
+  if (!found) throw new RequirementsError(`${ref} is not in ${doc} any more — refresh the PRD tab`, 404);
+  const latest = approvalsOf(p.id, doc)[0];
+  const revision = !latest ? 'draft, never approved'
+    : latest.hash === cur.hash ? `approved v${latest.version}`
+    : `draft: changed since approved v${latest.version}`;
+  const text = found.text.length > CONTEXT_MAX ? `${found.text.slice(0, CONTEXT_MAX)}\n… (cut at ${CONTEXT_MAX} characters; read the file for the rest)` : found.text;
+  return { doc, ref, label: found.label + (found.retired ? ' (retired)' : ''), revision, text };
+}
+
+// --- Proposals: edits the agent suggests, the user accepts or rejects ----------------------------
+
+const proposalRow = (id: number) => db.select().from(requirementProposals).where(eq(requirementProposals.id, id)).get();
+
+export function submitRequirementProposal(
+  p: ProjectLike, chatId: number, runId: number, input: ProposeRequirementsEdit,
+): { ok: true; id: number; created: boolean } | { ok: false; error: string } {
+  if (!isDocPath(input.path)) return { ok: false, error: `"${input.path}" is not a requirements document: use "${PRD_FILE}" or "features/<slug>.md" (lower-case letters, digits, dashes)` };
+  if ((input.edits === undefined) === (input.content === undefined)) return { ok: false, error: 'send either edits (to change an existing document) or content (to create one), not both' };
+  let cur: { content: string; hash: string } | null;
+  try { cur = readCurrent(p, input.path); } catch (e) { return { ok: false, error: (e as Error).message }; }
+  let next: string;
+  if (input.edits) {
+    if (!cur) return { ok: false, error: `${input.path} doesn't exist yet; send its whole text as content to create it` };
+    if (input.edits.length === 0) return { ok: false, error: 'no edits' };
+    const r = applyEdits(cur.content, input.edits);
+    if (!r.ok) return { ok: false, error: r.error };
+    next = r.text;
+  } else {
+    if (cur) return { ok: false, error: `${input.path} exists; change it with edits (old_string/new_string against its current text) rather than replacing it whole` };
+    next = input.content!;
+  }
+  if (cur && next === cur.content) return { ok: false, error: 'the edits change nothing' };
+  const { kept, elsewhere } = idsAround(p, input.path, cur);
+  const errors = checkRevision(parseRequirements(next), kept, elsewhere);
+  if (errors.length) return { ok: false, error: errors.join(' ') };
+
+  const at = new Date().toISOString();
+  // A newer proposal from the same chat for the same document replaces the open one.
+  db.update(requirementProposals).set({ status: 'superseded', decidedAt: at })
+    .where(and(eq(requirementProposals.chatId, chatId), eq(requirementProposals.path, input.path), eq(requirementProposals.status, 'open'))).run();
+  const row = db.insert(requirementProposals).values({
+    projectId: p.id, chatId, runId, path: input.path, baseHash: cur?.hash ?? null, content: next,
+    summary: input.summary.trim(), status: 'open', createdAt: at,
+  }).returning().get();
+  return { ok: true, id: row.id, created: !cur };
+}
+
+function toProposal(p: ProjectLike, row: typeof requirementProposals.$inferSelect): RequirementProposal {
+  let cur: { content: string; hash: string } | null = null;
+  try { cur = readCurrent(p, row.path); } catch { /* shown as no file */ }
+  const chat = db.select({ title: chats.title }).from(chats).where(eq(chats.id, row.chatId)).get();
+  return {
+    id: row.id, path: row.path, chatId: row.chatId, chatTitle: chat?.title ?? `chat ${row.chatId}`, summary: row.summary,
+    status: row.status, baseHash: row.baseHash, current: cur?.content ?? null, currentHash: cur?.hash ?? null,
+    content: row.content, createdAt: row.createdAt, decidedAt: row.decidedAt,
+  };
+}
+
+// The open ones, and the last few decided, newest first.
+export function listRequirementProposals(p: ProjectLike): RequirementProposal[] {
+  const rows = db.select().from(requirementProposals).where(eq(requirementProposals.projectId, p.id)).orderBy(desc(requirementProposals.id)).all();
+  return [...rows.filter(r => r.status === 'open'), ...rows.filter(r => r.status !== 'open').slice(0, 10)].map(r => toProposal(p, r));
+}
+
+export function getRequirementProposal(p: ProjectLike, id: number): RequirementProposal {
+  const row = proposalRow(id);
+  if (!row || row.projectId !== p.id) throw new RequirementsError('no such proposal', 404);
+  return toProposal(p, row);
+}
+
+// Accept: write the proposed text, but only over the file it was made against — if the document
+// changed since (an edit here, in an editor, another proposal accepted), the agent proposes again.
+export function decideRequirementProposal(p: ProjectLike, id: number, accept: boolean): RequirementProposal {
+  const row = proposalRow(id);
+  if (!row || row.projectId !== p.id) throw new RequirementsError('no such proposal', 404);
+  if (row.status !== 'open') throw new RequirementsError(`this proposal was already ${row.status}`, 409);
+  if (accept) {
+    try {
+      saveRequirement(p, row.path, row.content, row.baseHash);
+    } catch (e) {
+      if (e instanceof RequirementsError && e.status === 409) {
+        throw new RequirementsError('The document changed since this was proposed. Reject it and ask for a new proposal against the current text.', 409);
+      }
+      throw e;
+    }
+  }
+  db.update(requirementProposals).set({ status: accept ? 'accepted' : 'rejected', decidedAt: new Date().toISOString() })
+    .where(eq(requirementProposals.id, id)).run();
+  return getRequirementProposal(p, id);
+}
+
+// For the Discuss prompt: what became of this chat's recent proposals, which the agent can't see.
+export function proposalStatusLine(chatId: number): string {
+  const rows = db.select().from(requirementProposals).where(eq(requirementProposals.chatId, chatId)).orderBy(desc(requirementProposals.id)).limit(5).all();
+  if (rows.length === 0) return '';
+  return 'Your recent requirements proposals in this chat: ' + rows.map(r => `#${r.id} ${r.path} — ${r.status}`).join('; ') + '.';
+}
+
+// For the agent: what documents there are, their state and ids (it reads the text with Read).
+export function requirementsOverview(p: ProjectLike) {
+  const { dir, docs } = listRequirements(p);
+  return {
+    folder: dir,
+    documents: docs.map(d => ({
+      path: d.path, title: d.title, exists: d.hash !== null, state: d.state,
+      approvedVersion: d.approved?.version ?? null, ids: d.ids,
+    })),
+  };
 }

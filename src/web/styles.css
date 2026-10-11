@@ -402,6 +402,31 @@ body.resizing .workspace { pointer-events: none; }
 .prd > * { max-width: 760px; margin-left: auto; margin-right: auto; }
 .prd h1, .prd h2, .prd h3 { scroll-margin-top: 12px; }
 .prd-empty { padding: 32px 28px; max-width: 560px; margin: 0 auto; line-height: 1.6; }
+/* Attaching: a quiet "+ chat" beside each requirement and section, shown on hover or focus; attached
+   ones keep the context colour (as map nodes do) and keep the button visible. */
+.req-target { position: relative; border-radius: 6px; }
+.req-target.req-attached { background: var(--card); box-shadow: 0 0 0 4px var(--card); }
+.req-attach {
+  background: none; color: var(--accent); border: 1px solid var(--line); min-height: 0; padding: 0 6px; margin-left: 8px;
+  font-size: 11.5px; font-weight: 400; line-height: 18px; vertical-align: middle; opacity: 0; transition: opacity .12s;
+}
+.req-target:hover > .req-attach, .req-attach:focus-visible, .req-attach.on { opacity: 1; }
+.req-attach.on { color: var(--text); border-color: var(--card-line); background: var(--card); }
+@media (hover: none) { .req-attach { opacity: .7; } }
+.chip.req { background: var(--user); border-color: color-mix(in srgb, var(--accent) 40%, var(--line)); }
+.req-card .req-card-summary { flex-basis: 100%; }
+/* A proposed edit as a diff: old/new line numbers, sign, text. */
+.req-diff { font-size: 12.5px; line-height: 1.55; padding: 8px 0; }
+.req-diff-line { display: grid; grid-template-columns: 3.5em 3.5em 1.5em 1fr; white-space: pre-wrap; }
+.req-diff-line.add { background: color-mix(in srgb, var(--good) 14%, transparent); }
+.req-diff-line.del { background: color-mix(in srgb, var(--bad) 14%, transparent); }
+.req-diff-line.del .req-diff-text { text-decoration: line-through; text-decoration-color: color-mix(in srgb, var(--bad) 50%, transparent); }
+.req-diff-n { color: var(--muted); text-align: right; padding-right: 8px; user-select: none; }
+.req-diff-sign { color: var(--muted); text-align: center; user-select: none; }
+.req-diff-line.add .req-diff-sign { color: var(--good); } .req-diff-line.del .req-diff-sign { color: var(--bad); }
+.req-diff-text { padding-right: 16px; overflow-wrap: anywhere; }
+.req-diff-skip { color: var(--muted); padding: 4px 0 4px 8.5em; font-family: system-ui, sans-serif; font-size: 12px; }
+
 /* A narrow workspace: the document list goes above the document. */
 @container (max-width: 620px) {
   .req { flex-direction: column; }

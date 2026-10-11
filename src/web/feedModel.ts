@@ -14,6 +14,7 @@ export type Block =
   | Activity
   | { kind: 'note'; key: string; text: string; tone: 'muted' | 'bad' | 'good' }
   | { kind: 'approval'; key: string; approval: Approval }
+  | { kind: 'req-proposal'; key: string; proposalId: number; path: string; summary: string }
   | { kind: 'plan'; key: string; versionId: number; version: number; title: string; counts: { added: number; changed: number; removed: number } }
   | { kind: 'check'; key: string; checkId: number; version: number; versionId?: number; counts: Record<string, number>; failed?: string };
 
@@ -88,6 +89,8 @@ export function derive(items: FeedItem[], roots: string[]): Derived {
       blocks.push({ kind: 'note', key, tone: 'muted', text: it.by === 'agent' ? 'Plan dropped, as you asked in the chat.' : 'Plan dropped.' });
     } else if (it.kind === 'check') {
       blocks.push({ kind: 'check', key, checkId: it.checkId, version: it.version, versionId: it.versionId, counts: it.counts, failed: it.failed });
+    } else if (it.kind === 'req-proposal') {
+      blocks.push({ kind: 'req-proposal', key, proposalId: it.proposalId, path: it.path, summary: it.summary });
     } else if (it.kind === 'plan') {
       blocks.push({ kind: 'plan', key, versionId: it.versionId, version: it.version, title: it.title, counts: it.counts });
     } else {

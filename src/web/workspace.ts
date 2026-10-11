@@ -28,10 +28,18 @@ export function clampSplit(pct: number, totalPx: number): number {
   return Math.round(Math.min(Math.max(pct, lo), hi) * 10) / 10;
 }
 
+// What can be attached to a message: a map node, or a requirement / section of a requirements document.
+export type ReqRef = { doc: string; ref: string; label: string };
+export type ContextRef = NodeRef | ReqRef;
+export const isNodeRef = (c: ContextRef): c is NodeRef => 'view' in c;
+export const ctxKey = (c: ContextRef) => (isNodeRef(c) ? `map:${c.view}:${c.nodeId}` : `req:${c.doc}:${c.ref}`);
+export const toggleIn = (cs: ContextRef[], c: ContextRef) =>
+  (cs.some(x => ctxKey(x) === ctxKey(c)) ? cs.filter(x => ctxKey(x) !== ctxKey(c)) : [...cs, c]);
+
 // What a chat had in hand when you switched away: the unsent message, the context attached to it,
 // the workspace tab and file. Per chat id (ids are global, so projects never share an entry), for
 // the page's lifetime; the draft is also kept in localStorage so a reload doesn't lose it.
-export type ChatMemory = { draft: string; ctx: NodeRef[]; tab?: WorkspaceTab; file?: { path: string; line?: number } };
+export type ChatMemory = { draft: string; ctx: ContextRef[]; tab?: WorkspaceTab; file?: { path: string; line?: number } };
 
 const memory = new Map<number, ChatMemory>();
 const draftKey = (chatId: number) => `fd.draft.${chatId}`;

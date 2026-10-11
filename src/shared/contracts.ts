@@ -83,7 +83,10 @@ export const MODELS = [
 
 // A map node attached to a message as context (Phase 1c). `view` is a MapViewId, checked server-side.
 export const NodeContext = z.object({ view: z.string(), nodeId: z.string() });
-export const SendMessage = z.object({ text: z.string().min(1), context: z.array(NodeContext).max(20).optional() });
+// A requirement (BR-001) or a section (§Scope) of a requirements document (PLAN.md §11), attached the
+// same way: the server reads its text from the file.
+export const RequirementContext = z.object({ doc: z.string(), ref: z.string().min(1).max(200) });
+export const SendMessage = z.object({ text: z.string().min(1), context: z.array(z.union([NodeContext, RequirementContext])).max(20).optional() });
 // Change a chat's mode and/or its model for a mode. `null` clears an override (back to the project default).
 export const ChatSettings = z.object({
   mode: Mode.optional(),
@@ -137,7 +140,11 @@ export const FeedItem = z.discriminatedUnion('kind', [
   // mode/model: what this turn ran with, so the history shows it.
   z.object({
     kind: z.literal('user'), ...base, text: z.string(), mode: Mode.optional(), model: z.string().optional(),
-    context: z.array(z.object({ view: z.string(), nodeId: z.string(), label: z.string() })).optional(),
+    // Map nodes carry view/nodeId; requirements doc/ref (and the revision they were sent at).
+    context: z.array(z.object({
+      view: z.string().optional(), nodeId: z.string().optional(), doc: z.string().optional(), ref: z.string().optional(),
+      revision: z.string().optional(), label: z.string(),
+    })).optional(),
   }),
   z.object({ kind: z.literal('claude'), ...base, event: ClaudeEvent }),
   z.object({
@@ -151,6 +158,8 @@ export const FeedItem = z.discriminatedUnion('kind', [
     kind: z.literal('plan'), ...base, versionId: z.number(), version: z.number(), title: z.string(),
     counts: z.object({ added: z.number(), changed: z.number(), removed: z.number() }),
   }),
+  // The agent proposed an edit to a requirements document (Discuss), to review in the PRD tab.
+  z.object({ kind: z.literal('req-proposal'), ...base, proposalId: z.number(), path: z.string(), summary: z.string() }),
   // The chat's plan was dropped: by you (the Drop button) or by the agent when you asked in the chat.
   z.object({ kind: z.literal('plan-dropped'), ...base, by: z.enum(['user', 'agent']) }),
   // A check of what was built against the approved plan finished.
@@ -422,3 +431,35 @@ export type RequirementDoc = z.infer<typeof RequirementDoc>;
 export const SaveRequirementDoc = z.object({ path: z.string(), content: z.string().max(512 * 1024), baseHash: z.string().nullable() });
 // Approve exactly what was reviewed: the hash shown must still be the file's.
 export const ApproveRequirementDoc = z.object({ path: z.string(), hash: z.string() });
+
+// An edit to a requirements document proposed by the agent in a Discuss chat: reviewed as a diff in
+// the PRD tab, written only when accepted (as a draft revision — approving is separate).
+export const RequirementProposalStatus = z.enum(['open', 'accepted', 'rejected', 'superseded']);
+export const RequirementProposal = z.object({
+  id: z.number(),
+  path: z.string(),
+  chatId: z.number(),
+  chatTitle: z.string(),
+  summary: z.string(),
+  status: RequirementProposalStatus,
+  baseHash: z.string().nullable(), // the file it was made against (null: a new document)
+  current: z.string().nullable(), // the file now, to diff against
+  currentHash: z.string().nullable(),
+  content: z.string(), // the document as proposed
+  createdAt: z.string(),
+  decidedAt: z.string().nullable(),
+});
+export type RequirementProposal = z.infer<typeof RequirementProposal>;
+
+// What the agent sends: Edit-style replacements against the current file, or a whole document (to
+// create one). The file is never written by this; Accept does that.
+export const ProposeRequirementsEdit = z.object({
+  path: z.string().describe('The document, relative to the requirements folder: "PRD.md" or "features/<slug>.md" (slug: lower-case letters, digits, dashes)'),
+  summary: z.string().min(1).max(500).describe('One or two sentences: what changes and why. The user reads this first.'),
+  edits: z.array(z.object({
+    old_string: z.string().describe('Exact text from the current document, unique in it'),
+    new_string: z.string(),
+  })).max(50).optional().describe('Replacements applied in order to the current document. Use this for changes to an existing document.'),
+  content: z.string().max(512 * 1024).optional().describe('The whole document. Use this only to create a document that does not exist yet.'),
+});
+export type ProposeRequirementsEdit = z.infer<typeof ProposeRequirementsEdit>;

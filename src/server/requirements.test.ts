@@ -120,3 +120,47 @@ test('the hook recognises requirements paths, whatever the case or a link in bet
   assert.ok(isRequirementsPath({ ...project, mapsRepo: 'api' }, join(repo, 'api/docs/requirements/PRD.md')));
   assert.ok(!isRequirementsPath({ ...project, mapsRepo: 'api' }, join(repo, 'web/docs/other.md')));
 });
+
+test('context: a requirement or section read from the file, with the revision it is', async () => {
+  const { resolveRequirementRef } = await import('./requirements.ts');
+  writeFileSync(file, V1 + '\n### ~~BR-002~~ Refunds need a reason (retired)\n'); // as an editor would
+  const r = resolveRequirementRef(project, 'PRD.md', 'BR-001');
+  assert.equal(r.label, 'BR-001 Orders need a payment');
+  assert.match(r.text, /^### BR-001 · Orders need a payment\nAlways\./);
+  assert.match(r.revision, /^draft: changed since approved v2$/);
+  assert.match(resolveRequirementRef(project, 'PRD.md', '§Business rules').text, /^## Business rules/);
+  fails(() => resolveRequirementRef(project, 'PRD.md', 'BR-999'), 404, /not in PRD.md any more/);
+});
+
+test('proposals: edits checked like a save, written only on Accept, refused once the file moved on', async () => {
+  const { submitRequirementProposal, decideRequirementProposal, listRequirementProposals } = await import('./requirements.ts');
+  const before = readFileSync(file, 'utf8');
+  const bad = submitRequirementProposal(project, 7, 1, { path: 'PRD.md', summary: 'drop a rule', edits: [{ old_string: '### BR-001 · Orders need a payment', new_string: '' }] });
+  assert.ok(!bad.ok && /Removed: BR-001/.test(bad.error));
+  assert.ok(!submitRequirementProposal(project, 7, 1, { path: '../x.md', summary: 's', content: 'x' }).ok);
+  assert.ok(!submitRequirementProposal(project, 7, 1, { path: 'PRD.md', summary: 's', content: 'whole' }).ok); // exists: use edits
+
+  const a = submitRequirementProposal(project, 7, 1, { path: 'PRD.md', summary: 'first', edits: [{ old_string: 'Always.', new_string: 'Always, even for staff.' }] });
+  const b = submitRequirementProposal(project, 7, 1, { path: 'PRD.md', summary: 'second', edits: [{ old_string: 'Always.', new_string: 'Always, no exceptions.' }] });
+  assert.ok(a.ok && b.ok);
+  assert.equal(readFileSync(file, 'utf8'), before); // proposing writes nothing
+  const open = listRequirementProposals(project);
+  assert.equal(open.find(x => x.id === a.id)?.status, 'superseded');
+  assert.equal(open.find(x => x.id === b.id)?.status, 'open');
+
+  const c = submitRequirementProposal(project, 8, 1, { path: 'features/refunds.md', summary: 'new spec', content: '# Refunds\n- **AC-002** A refund names its reason\n' });
+  assert.ok(c.ok && c.created);
+
+  // Accept b: the file now has it, as a draft.
+  assert.equal(decideRequirementProposal(project, b.id, true).status, 'accepted');
+  assert.match(readFileSync(file, 'utf8'), /Always, no exceptions\./);
+  fails(() => decideRequirementProposal(project, b.id, true), 409, /already accepted/);
+
+  // Another proposal made against the old text can't be applied any more.
+  const d = submitRequirementProposal(project, 8, 1, { path: 'PRD.md', summary: 'late', edits: [{ old_string: 'Always, no exceptions.', new_string: 'Mostly.' }] });
+  assert.ok(d.ok);
+  writeFileSync(file, readFileSync(file, 'utf8') + '\nIDE edit.\n');
+  fails(() => decideRequirementProposal(project, d.id, true), 409, /changed since this was proposed/);
+  assert.equal(decideRequirementProposal(project, d.id, false).status, 'rejected');
+  assert.doesNotMatch(readFileSync(file, 'utf8'), /Mostly\./);
+});

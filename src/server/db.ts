@@ -98,6 +98,22 @@ export const requirementApprovals = sqliteTable('requirement_approvals', {
   approvedAt: text('approved_at').notNull(),
 });
 
+// Edits to requirements documents the agent proposed in a Discuss chat. Only Accept writes the file
+// (through the same checked save as the editor); the row keeps what was proposed and what became of it.
+export const requirementProposals = sqliteTable('requirement_proposals', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  projectId: integer('project_id').notNull(),
+  chatId: integer('chat_id').notNull(),
+  runId: integer('run_id').notNull(),
+  path: text('path').notNull(),
+  baseHash: text('base_hash'), // the file's hash when proposed; null: the document didn't exist
+  content: text('content').notNull(), // the whole document as proposed
+  summary: text('summary').notNull(),
+  status: text('status', { enum: ['open', 'accepted', 'rejected', 'superseded'] }).notNull(),
+  createdAt: text('created_at').notNull(),
+  decidedAt: text('decided_at'),
+});
+
 // The audit trail: every tool call the hook decided, and who/what decided it.
 export const approvals = sqliteTable('approvals', {
   id: integer('id').primaryKey({ autoIncrement: true }),
@@ -151,6 +167,10 @@ sqlite.exec(`
     id INTEGER PRIMARY KEY AUTOINCREMENT, project_id INTEGER NOT NULL, path TEXT NOT NULL,
     version INTEGER NOT NULL, hash TEXT NOT NULL, content TEXT NOT NULL, ids TEXT NOT NULL,
     approved_at TEXT NOT NULL, UNIQUE (project_id, path, version));
+  CREATE TABLE IF NOT EXISTS requirement_proposals (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, project_id INTEGER NOT NULL, chat_id INTEGER NOT NULL,
+    run_id INTEGER NOT NULL, path TEXT NOT NULL, base_hash TEXT, content TEXT NOT NULL, summary TEXT NOT NULL,
+    status TEXT NOT NULL, created_at TEXT NOT NULL, decided_at TEXT);
   CREATE TRIGGER IF NOT EXISTS requirement_approvals_immutable
     BEFORE UPDATE ON requirement_approvals
     BEGIN SELECT RAISE(ABORT, 'approved requirements are immutable'); END;

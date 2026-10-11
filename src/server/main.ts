@@ -17,11 +17,14 @@ import { config } from './config.ts';
 import { db, chats, projects, rules } from './db.ts';
 import * as feed from './feed.ts';
 import { decide, hookResponse, lockHolder, resolveApproval } from './hook.ts';
-import { effectiveModel, isRunning, startTurn, stopTurn } from './runner.ts';
+import { effectiveModel, isRunning, startTurn, stopTurn, type ContextItem } from './runner.ts';
 import { TEMPLATE_RULES } from './rules.ts';
 import { changedSince, generatorDecision, jobFor, jobForSession, mapsDir, moveMaps, readMap, repoDirs, staleNodeIds, startGeneration, stopGeneration } from './maps.ts';
 import { viewFile } from './files.ts';
-import { RequirementsError, approveRequirement, getRequirement, listRequirements, saveRequirement } from './requirements.ts';
+import {
+  RequirementsError, approveRequirement, decideRequirementProposal, getRequirement, listRequirementProposals, listRequirements,
+  resolveRequirementRef, saveRequirement,
+} from './requirements.ts';
 import { projectProcesses, stopProcessGroup } from './processes.ts';
 import { refuseLocal } from './guard.ts';
 import { handleMcp } from './mcp.ts';
@@ -246,6 +249,11 @@ function requirementsCall(c: Context, f: (p: typeof projects.$inferSelect) => un
     throw e;
   }
 }
+app.get('/api/projects/:id/requirements/proposals', c => requirementsCall(c, p => listRequirementProposals(p)));
+app.post('/api/projects/:id/requirements/proposals/:pid/accept', c =>
+  requirementsCall(c, p => decideRequirementProposal(p, Number(c.req.param('pid')), true)));
+app.post('/api/projects/:id/requirements/proposals/:pid/reject', c =>
+  requirementsCall(c, p => decideRequirementProposal(p, Number(c.req.param('pid')), false)));
 app.get('/api/projects/:id/requirements', c => requirementsCall(c, p => listRequirements(p)));
 app.get('/api/projects/:id/requirements/doc', c => requirementsCall(c, p => {
   const v = c.req.query('version');
@@ -330,10 +338,20 @@ app.post('/api/chats/:id/messages', async c => {
     const title = body.data.text.replace(/\s+/g, ' ').trim().slice(0, 60);
     db.update(chats).set({ title }).where(eq(chats.id, id)).run();
   }
-  // Resolve attached map nodes from the map files on disk.
-  const context = [];
+  // Resolve what was attached from the files on disk: map nodes from the maps, requirements from the documents.
+  const context: ContextItem[] = [];
   const project = chat && db.select().from(projects).where(eq(projects.id, chat.projectId)).get();
   for (const ref of body.data.context ?? []) {
+    if ('doc' in ref) {
+      if (!project) return c.json({ error: 'no such chat' }, 404);
+      try {
+        context.push(resolveRequirementRef(project, ref.doc, ref.ref));
+      } catch (e) {
+        if (e instanceof RequirementsError) return c.json({ error: e.message }, 400);
+        throw e;
+      }
+      continue;
+    }
     const view = MapViewId.safeParse(ref.view);
     // On the map, or else a box that only exists in this chat's plan.
     const node = project && view.success

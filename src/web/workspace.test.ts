@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { CHAT_MIN_PX, SPLIT_DEFAULT, WORKSPACE_MIN_PX, clampSplit, forgetAll, isMapTab, isWorkspaceTab, recall, remember } from './workspace.ts';
+import { CHAT_MIN_PX, SPLIT_DEFAULT, WORKSPACE_MIN_PX, clampSplit, forgetAll, isMapTab, isWorkspaceTab, recall, remember, toggleIn, type ContextRef } from './workspace.ts';
 
 test('the divider keeps both panels at their minimum width', () => {
   assert.equal(clampSplit(35, 2000), 35);
@@ -27,7 +27,7 @@ test('each chat keeps its own draft, context and tab', () => {
   };
   remember(1, { draft: 'half a thought', ctx: [{ view: 'architecture', nodeId: 'api', label: 'API' }], tab: 'flows' }, storage);
   remember(2, { draft: '', ctx: [], tab: 'prd' }, storage);
-  assert.deepEqual(recall(1, storage).ctx.map(c => c.nodeId), ['api']);
+  assert.deepEqual(recall(1, storage).ctx.map(c => c.label), ['API']);
   assert.equal(recall(1, storage).tab, 'flows');
   assert.equal(recall(2, storage).draft, '');
   assert.equal(store.has('fd.draft.2'), false);
@@ -35,4 +35,15 @@ test('each chat keeps its own draft, context and tab', () => {
   forgetAll();
   assert.deepEqual(recall(1, storage), { draft: 'half a thought', ctx: [] });
   assert.deepEqual(recall(3, storage), { draft: '', ctx: [] });
+});
+
+test('map nodes and requirements share one context list, toggled by identity', () => {
+  const node: ContextRef = { view: 'architecture', nodeId: 'api', label: 'API' };
+  const rule: ContextRef = { doc: 'PRD.md', ref: 'BR-001', label: 'BR-001 Pay first' };
+  let cs = toggleIn(toggleIn([], node), rule);
+  assert.equal(cs.length, 2);
+  cs = toggleIn(cs, { doc: 'PRD.md', ref: 'BR-001', label: 'renamed' });
+  assert.deepEqual(cs, [node]);
+  // The same id in another document is a different requirement.
+  assert.equal(toggleIn(toggleIn([], rule), { doc: 'features/x.md', ref: 'BR-001', label: '' }).length, 2);
 });

@@ -13,7 +13,10 @@ import { Crumbs, MapCanvas, nodesForFile, type Heat } from './MapCanvas.tsx';
 import { useMap, type NodeRef } from './MapView.tsx';
 import { FileViewer } from './FileViewer.tsx';
 import { PrdView } from './PrdView.tsx';
-import { SPLIT_DEFAULT, WORKSPACE_TABS, clampSplit, isMapTab, isWorkspaceTab, recall, remember, type WorkspaceTab } from './workspace.ts';
+import {
+  SPLIT_DEFAULT, WORKSPACE_TABS, clampSplit, ctxKey, isMapTab, isNodeRef, isWorkspaceTab, recall, remember, toggleIn,
+  type ContextRef, type WorkspaceTab,
+} from './workspace.ts';
 
 export function ChatView({ chat, project, onChanged, initialContext, chats, onSwitchChat, onNewChat, onShowNav }: {
   chat: Chat; project: Project; onChanged: () => void; initialContext?: NodeRef[];
@@ -21,7 +24,9 @@ export function ChatView({ chat, project, onChanged, initialContext, chats, onSw
 }) {
   // Picks up where this chat was left: its unsent draft, attached context and workspace tab.
   const [mem] = useState(() => recall(chat.id, storage()));
-  const [ctx, setCtx] = useState<NodeRef[]>(() => withContext(mem.ctx, initialContext ?? []));
+  const [ctx, setCtx] = useState<ContextRef[]>(() => withContext(mem.ctx, initialContext ?? []));
+  // "Review" on a proposal card: the PRD tab opens that proposal.
+  const [review, setReview] = useState<{ id: number; seq: number } | null>(null);
   const [draft, setDraft] = useState(mem.draft);
   const [tab, setTab] = useState<WorkspaceTab>(() => mem.tab ?? lastTab());
   // The file open in the Code tab ('' = the project's top folder), at a line when one is known.
@@ -130,7 +135,7 @@ export function ChatView({ chat, project, onChanged, initialContext, chats, onSw
     if (!text || d.running) return;
     setError('');
     try {
-      await api.send(chat.id, text, ctx.map(c => ({ view: c.view, nodeId: c.nodeId })));
+      await api.send(chat.id, text, ctx.map(c => (isNodeRef(c) ? { view: c.view, nodeId: c.nodeId } : { doc: c.doc, ref: c.ref })));
       setDraft('');
       setCtx([]);
       toBottom();
@@ -144,8 +149,7 @@ export function ChatView({ chat, project, onChanged, initialContext, chats, onSw
     for (const r of [project.realPath, project.path]) if (p.startsWith(r + '/')) return p.slice(r.length + 1);
     return p;
   };
-  const toggleCtx = (n: NodeRef) =>
-    setCtx(cs => (cs.some(c => c.view === n.view && c.nodeId === n.nodeId) ? cs.filter(c => !(c.view === n.view && c.nodeId === n.nodeId)) : [...cs, n]));
+  const toggleCtx = (c: ContextRef) => setCtx(cs => toggleIn(cs, c));
 
   return (
     <div
@@ -207,7 +211,7 @@ export function ChatView({ chat, project, onChanged, initialContext, chats, onSw
         {items.length === 0 && (
           <div className="feed-empty muted">
             {connected
-              ? <>Ask about the code, plan a change, or say what to build. Click boxes on the workspace's maps to attach them as context. {cur.mode === 'discuss' ? 'This chat is in Discuss, so nothing gets edited until you switch it to Build.' : ''}</>
+              ? <>Ask about the code, plan a change, or say what to build. Click boxes on the workspace's maps, or requirements in the PRD, to attach them as context. {cur.mode === 'discuss' ? 'This chat is in Discuss, so nothing gets edited until you switch it to Build.' : ''}</>
               : 'Loading…'}
           </div>
         )}
@@ -255,6 +259,15 @@ export function ChatView({ chat, project, onChanged, initialContext, chats, onSw
                   <button className="small" onClick={() => (b.versionId ? showPlan(b.versionId) : openTab(isMapTab(tab) ? tab : 'architecture'))}>Show on map</button>
                 </div>
               );
+            case 'req-proposal':
+              return (
+                <div key={b.key} className="plan-card req-card">
+                  <span className="plan-card-v">Requirements edit #{b.proposalId}</span>
+                  <span className="mono muted">{b.path}</span>
+                  <span className="req-card-summary">{b.summary}</span>
+                  <button className="small" onClick={() => { setReview(r => ({ id: b.proposalId, seq: (r?.seq ?? 0) + 1 })); openTab('prd'); }}>Review</button>
+                </div>
+              );
             case 'plan':
               return (
                 <div key={b.key} className="plan-card">
@@ -287,7 +300,7 @@ export function ChatView({ chat, project, onChanged, initialContext, chats, onSw
         {ctx.length > 0 && (
           <div className="chips composer-chips">
             {ctx.map(c => (
-              <span key={`${c.view}:${c.nodeId}`} className="chip">
+              <span key={ctxKey(c)} className={`chip ${isNodeRef(c) ? '' : 'req'}`} title={isNodeRef(c) ? `${c.view} map` : c.doc}>
                 {c.label}
                 <button className="chip-x" title="Remove" onClick={() => toggleCtx(c)}>×</button>
               </span>
@@ -338,7 +351,7 @@ export function ChatView({ chat, project, onChanged, initialContext, chats, onSw
             </div>
           </div>
           <div className="ws-body" role="tabpanel">
-            {tab === 'prd' && <PrdView project={project} />}
+            {tab === 'prd' && <PrdView project={project} ctx={ctx} onToggle={toggleCtx} review={review} />}
             {isMapTab(tab) && <ChatMapPane chat={chat} project={project} view={tab} ctx={ctx} onToggle={toggleCtx} touched={d.touched} live={d.running} planSignal={planSignal} />}
             {tab === 'code' && (
               <FileViewer
@@ -367,7 +380,7 @@ const toggled = (s: Set<string>, k: string) => { const n = new Set(s); if (n.has
 export type PlanSignal = { versionId?: number; seq: number }; // "show this version" / "a new one arrived"
 
 function ChatMapPane({ chat, project, view, ctx, onToggle, touched, live, planSignal }: {
-  chat: Chat; project: Project; view: MapViewId; ctx: NodeRef[]; onToggle: (n: NodeRef) => void; touched: Map<string, Heat>; live: boolean;
+  chat: Chat; project: Project; view: MapViewId; ctx: ContextRef[]; onToggle: (n: NodeRef) => void; touched: Map<string, Heat>; live: boolean;
   planSignal: PlanSignal;
 }) {
   const { data } = useMap(project.id, view);
@@ -432,7 +445,7 @@ function ChatMapPane({ chat, project, view, ctx, onToggle, touched, live, planSi
   }, [onPlan, map, version, view, filter]);
 
   const stale = useMemo(() => new Set(onPlan ? [] : data?.staleNodeIds ?? []), [data, onPlan]);
-  const inContext = useMemo(() => new Set(ctx.filter(c => c.view === view).map(c => c.nodeId)), [ctx, view]);
+  const inContext = useMemo(() => new Set(ctx.filter(isNodeRef).filter(c => c.view === view).map(c => c.nodeId)), [ctx, view]);
   const heat = useMemo(() => {
     const out = new Map<string, Heat>();
     if (!shown) return out;
@@ -582,8 +595,7 @@ function ChatPicker({ chat, chats, onSwitch, onNew, onShowNav }: {
   );
 }
 
-const withContext = (have: NodeRef[], add: NodeRef[]) =>
-  [...have, ...add.filter(n => !have.some(c => c.view === n.view && c.nodeId === n.nodeId))];
+const withContext = (have: ContextRef[], add: ContextRef[]) => [...have, ...add.filter(n => !have.some(c => ctxKey(c) === ctxKey(n)))];
 const lastTab = (): WorkspaceTab => { const t = storageGet('fd.wtab'); return isWorkspaceTab(t) ? t : 'architecture'; };
 // localStorage itself can throw on access (blocked storage); the memory then lasts the page only.
 function storage(): Storage | undefined {

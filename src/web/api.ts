@@ -1,6 +1,6 @@
 // Thin typed client for the Flightdeck API. Responses are parsed with the shared contracts.
 import { z } from 'zod';
-import { BrowseResponse, Chat, FileResponse, RequirementDoc, RequirementsResponse, MapResponse, PlanResponse, ProcessGroup, Project, Rule, type Decision, type MapViewId, type Mode, type NewRule } from '../shared/contracts.ts';
+import { BrowseResponse, Chat, FileResponse, RequirementDoc, RequirementProposal, RequirementsResponse, MapResponse, PlanResponse, ProcessGroup, Project, Rule, type Decision, type MapViewId, type Mode, type NewRule } from '../shared/contracts.ts';
 
 async function call<T>(schema: z.ZodType<T>, method: string, url: string, body?: unknown): Promise<T> {
   const res = await fetch(url, {
@@ -27,7 +27,7 @@ export const api = {
     call(z.object({ project: Project, chatId: z.number(), error: z.string().optional() }), 'POST', '/api/projects/new', body),
   chats: (projectId: number) => call(z.array(Chat), 'GET', `/api/projects/${projectId}/chats`),
   newChat: (projectId: number) => call(Chat, 'POST', `/api/projects/${projectId}/chats`),
-  send: (chatId: number, text: string, context?: { view: string; nodeId: string }[]) =>
+  send: (chatId: number, text: string, context?: ({ view: string; nodeId: string } | { doc: string; ref: string })[]) =>
     call(Ok, 'POST', `/api/chats/${chatId}/messages`, { text, context: context?.length ? context : undefined }),
   stop: (chatId: number) => call(Ok, 'POST', `/api/chats/${chatId}/stop`),
   chatSettings: (chatId: number, body: { mode?: Mode; discussModel?: string | null; buildModel?: string | null }) =>
@@ -52,6 +52,9 @@ export const api = {
     call(RequirementDoc, 'POST', `/api/projects/${projectId}/requirements/doc`, { path, content, baseHash }),
   approveRequirement: (projectId: number, path: string, hash: string) =>
     call(RequirementDoc, 'POST', `/api/projects/${projectId}/requirements/approve`, { path, hash }),
+  proposals: (projectId: number) => call(z.array(RequirementProposal), 'GET', `/api/projects/${projectId}/requirements/proposals`),
+  decideProposal: (projectId: number, id: number, accept: boolean) =>
+    call(RequirementProposal, 'POST', `/api/projects/${projectId}/requirements/proposals/${id}/${accept ? 'accept' : 'reject'}`),
   processes: (projectId: number) => call(z.array(ProcessGroup), 'GET', `/api/projects/${projectId}/processes`),
   stopProcess: (projectId: number, pid: number) => call(Ok, 'POST', `/api/projects/${projectId}/processes/${pid}/stop`),
   rules: (projectId: number) => call(z.array(Rule), 'GET', `/api/projects/${projectId}/rules`),
