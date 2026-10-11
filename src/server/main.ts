@@ -3,8 +3,9 @@ import { serve } from '@hono/node-server';
 import { serveStatic } from '@hono/node-server/serve-static';
 import { Hono } from 'hono';
 import { streamSSE } from 'hono/streaming';
+import { execFileSync } from 'node:child_process';
 import { randomUUID, timingSafeEqual } from 'node:crypto';
-import { existsSync, realpathSync, statSync } from 'node:fs';
+import { existsSync, mkdirSync, realpathSync, statSync } from 'node:fs';
 import { basename, isAbsolute } from 'node:path';
 import { and, desc, eq } from 'drizzle-orm';
 import {
@@ -58,9 +59,20 @@ app.get('/api/projects', c => c.json(db.select().from(projects).all().map(toProj
 app.post('/api/projects', async c => {
   const body = NewProject.safeParse(await c.req.json());
   if (!body.success) return c.json({ error: 'name and path are required' }, 400);
-  const { path } = body.data;
-  if (!isAbsolute(path) || !existsSync(path) || !statSync(path).isDirectory())
-    return c.json({ error: `${path} doesn't exist on the box. Flightdeck adds existing git repositories.` }, 400);
+  const { path, create } = body.data;
+  if (!isAbsolute(path)) return c.json({ error: 'the path must be absolute' }, 400);
+  // Only a folder that doesn't exist yet can be created; an existing folder is never git-init'ed.
+  if (!existsSync(path) && create) {
+    try {
+      mkdirSync(path, { recursive: true });
+      execFileSync('git', ['init', '-b', 'main'], { cwd: path, encoding: 'utf8' });
+    } catch (e) {
+      return c.json({ error: `couldn't create ${path}: ${(e as Error).message}` }, 400);
+    }
+  }
+  if (!existsSync(path))
+    return c.json({ error: `${path} doesn't exist on the box.`, missing: true }, 400);
+  if (!statSync(path).isDirectory()) return c.json({ error: `${path} is not a folder` }, 400);
   if (!existsSync(`${path}/.git`)) return c.json({ error: `${path} is not a git repository` }, 400);
   if (db.select().from(projects).where(eq(projects.path, path)).get())
     return c.json({ error: 'that folder is already a project' }, 400);

@@ -9,14 +9,14 @@ async function call<T>(schema: z.ZodType<T>, method: string, url: string, body?:
     body: body ? JSON.stringify(body) : undefined,
   });
   const json = await res.json();
-  if (!res.ok) throw new Error(json.error ?? `${res.status}`);
+  if (!res.ok) throw Object.assign(new Error(json.error ?? `${res.status}`), { body: json });
   return schema.parse(json);
 }
 const Ok = z.object({ ok: z.boolean() });
 
 export const api = {
   projects: () => call(z.array(Project), 'GET', '/api/projects'),
-  addProject: (name: string, path: string) => call(Project, 'POST', '/api/projects', { name, path }),
+  addProject: (name: string, path: string, create?: boolean) => call(Project, 'POST', '/api/projects', { name, path, create }),
   chats: (projectId: number) => call(z.array(Chat), 'GET', `/api/projects/${projectId}/chats`),
   newChat: (projectId: number) => call(Chat, 'POST', `/api/projects/${projectId}/chats`),
   send: (chatId: number, text: string, context?: { view: string; nodeId: string }[]) =>

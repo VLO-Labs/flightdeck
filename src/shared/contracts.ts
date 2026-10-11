@@ -36,7 +36,11 @@ export const Project = z.object({
 });
 export type Project = z.infer<typeof Project>;
 
-export const NewProject = z.object({ name: z.string().min(1), path: z.string().min(1) });
+export const NewProject = z.object({
+  name: z.string().min(1),
+  path: z.string().min(1),
+  create: z.boolean().optional(), // the folder doesn't exist yet: make it and `git init` it
+});
 export const ProjectSettings = z.object({ discussModel: z.string().min(1), buildModel: z.string().min(1) });
 
 // Discuss: read, analyze, propose — edits are refused. Build: may change code (takes the edit lock).
