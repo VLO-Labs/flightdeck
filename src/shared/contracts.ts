@@ -166,7 +166,7 @@ export const FeedItem = z.discriminatedUnion('kind', [
     toolInput: z.record(z.string(), z.unknown()),
     toolUseId: z.string().optional(),
     state: z.enum(['pending', 'allowed', 'denied']),
-    decidedBy: z.enum(['user', 'rule', 'timeout', 'lock', 'mode']).optional(),
+    decidedBy: z.enum(['user', 'rule', 'timeout', 'lock', 'mode', 'requirements']).optional(),
     rule: z.string().optional(),
     reason: z.string().optional(),
     suggestedPattern: z.string().optional(),
@@ -381,3 +381,44 @@ export const BrowseResponse = z.object({
   dirs: z.array(z.object({ name: z.string(), path: z.string(), addable: z.boolean() })),
 });
 export type BrowseResponse = z.infer<typeof BrowseResponse>;
+
+// ---------------------------------------------------------------------------------------------
+// Requirements (PLAN.md §11): the PRD and feature specs, Markdown files under docs/requirements in the
+// repository. Approval is kept in Flightdeck's database (insert-only), never in the file.
+// ---------------------------------------------------------------------------------------------
+
+// draft: never approved · approved: the file is exactly the latest approved version ·
+// changed: approved before, the file differs since (a new draft revision) · missing: approved, file gone.
+export const RequirementState = z.enum(['draft', 'approved', 'changed', 'missing']);
+export type RequirementState = z.infer<typeof RequirementState>;
+
+export const RequirementDocSummary = z.object({
+  path: z.string(), // relative to docs/requirements
+  title: z.string().nullable(),
+  hash: z.string().nullable(), // null: no file
+  state: RequirementState,
+  approved: z.object({ version: z.number(), hash: z.string(), approvedAt: z.string() }).nullable(), // the latest approval
+  git: z.enum(['committed', 'modified', 'untracked', 'none']), // none: not inside a git repository
+  ids: z.array(z.string()),
+});
+export type RequirementDocSummary = z.infer<typeof RequirementDocSummary>;
+
+export const RequirementsResponse = z.object({
+  dir: z.string(), // where they live, relative to the project folder
+  docs: z.array(RequirementDocSummary),
+});
+export type RequirementsResponse = z.infer<typeof RequirementsResponse>;
+
+export const RequirementDoc = z.object({
+  summary: RequirementDocSummary,
+  content: z.string().nullable(), // the file now (null: no file)
+  versions: z.array(z.object({ version: z.number(), hash: z.string(), approvedAt: z.string() })), // newest first
+  viewing: z.object({ version: z.number(), content: z.string() }).nullable(), // an approved version, when one was asked for
+});
+export type RequirementDoc = z.infer<typeof RequirementDoc>;
+
+// Save the file. baseHash: the content's hash when editing began (null: creating it). A mismatch means
+// the file changed meanwhile (an editor, git) and the save is refused with 409 and the current text.
+export const SaveRequirementDoc = z.object({ path: z.string(), content: z.string().max(512 * 1024), baseHash: z.string().nullable() });
+// Approve exactly what was reviewed: the hash shown must still be the file's.
+export const ApproveRequirementDoc = z.object({ path: z.string(), hash: z.string() });

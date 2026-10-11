@@ -84,6 +84,20 @@ export const planChecks = sqliteTable('plan_checks', {
   createdAt: text('created_at').notNull(),
 });
 
+// Approved revisions of the requirements documents (PLAN.md §11). The documents are files in the
+// repository; what was approved is kept here, insert-only, so neither an edit to the file nor the
+// agent can change it after the fact. A later approval of the same document supersedes the earlier one.
+export const requirementApprovals = sqliteTable('requirement_approvals', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  projectId: integer('project_id').notNull(),
+  path: text('path').notNull(), // relative to docs/requirements: PRD.md, features/<slug>.md
+  version: integer('version').notNull(), // 1, 2, … per document
+  hash: text('hash').notNull(), // sha256 of the content
+  content: text('content').notNull(),
+  ids: text('ids').notNull(), // JSON string[]: the requirement ids it contains
+  approvedAt: text('approved_at').notNull(),
+});
+
 // The audit trail: every tool call the hook decided, and who/what decided it.
 export const approvals = sqliteTable('approvals', {
   id: integer('id').primaryKey({ autoIncrement: true }),
@@ -133,6 +147,16 @@ sqlite.exec(`
   CREATE TABLE IF NOT EXISTS plan_checks (
     id INTEGER PRIMARY KEY AUTOINCREMENT, plan_id INTEGER NOT NULL, version_id INTEGER NOT NULL,
     status TEXT NOT NULL, result TEXT NOT NULL, created_at TEXT NOT NULL);
+  CREATE TABLE IF NOT EXISTS requirement_approvals (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, project_id INTEGER NOT NULL, path TEXT NOT NULL,
+    version INTEGER NOT NULL, hash TEXT NOT NULL, content TEXT NOT NULL, ids TEXT NOT NULL,
+    approved_at TEXT NOT NULL, UNIQUE (project_id, path, version));
+  CREATE TRIGGER IF NOT EXISTS requirement_approvals_immutable
+    BEFORE UPDATE ON requirement_approvals
+    BEGIN SELECT RAISE(ABORT, 'approved requirements are immutable'); END;
+  CREATE TRIGGER IF NOT EXISTS requirement_approvals_no_delete
+    BEFORE DELETE ON requirement_approvals
+    BEGIN SELECT RAISE(ABORT, 'approved requirements are kept'); END;
   CREATE TRIGGER IF NOT EXISTS plan_versions_approval_once
     BEFORE UPDATE OF approved_at ON plan_versions WHEN OLD.approved_at IS NOT NULL
     BEGIN SELECT RAISE(ABORT, 'a plan version is approved once'); END;

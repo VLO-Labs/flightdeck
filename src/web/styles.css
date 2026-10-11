@@ -370,11 +370,46 @@ body.resizing .workspace { pointer-events: none; }
 .ws-body > .viewer.inline { width: 100%; height: 100%; border: 0; border-radius: 0; box-shadow: none; background: var(--panel); }
 .chat-map { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .chat-map-head:empty { display: none; }
-/* The PRD: a readable document, not a form. */
-.prd { overflow-y: auto; padding: 20px 28px 40px; line-height: 1.65; font-size: 15px; }
+/* Requirements: documents and outline on the left, the document itself readable, not a form. */
+.ws-body { container-type: inline-size; }
+.req { flex: 1; min-height: 0; display: flex; }
+.req-nav { width: 210px; flex: none; overflow-y: auto; border-right: 1px solid var(--line); background: var(--panel); padding: 10px 8px; display: flex; flex-direction: column; gap: 2px; }
+.req-nav-h { font-size: 11.5px; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; padding: 8px 6px 4px; }
+.req-doc-item { background: none; color: var(--text); text-align: left; display: flex; gap: 6px; align-items: center; justify-content: space-between; padding: 0 6px; min-height: 30px; border-radius: 6px; }
+.req-doc-item:hover:not(:disabled) { background: var(--code); filter: none; }
+.req-doc-item.active { background: var(--user); font-weight: 500; }
+.req-doc-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.req-new { padding: 6px; font-size: 13px; }
+.req-new-form { display: flex; flex-direction: column; gap: 4px; padding: 4px; }
+.req-new-path { font-size: 11.5px; word-break: break-all; }
+.req-outline { background: none; color: var(--muted); text-align: left; min-height: 0; padding: 3px 6px; font-size: 12.5px; border-radius: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.req-outline:hover:not(:disabled) { color: var(--text); background: var(--code); filter: none; }
+.req-outline.l1 { color: var(--text); font-weight: 600; }
+.req-outline.l3 { padding-left: 16px; } .req-outline.l4 { padding-left: 26px; }
+.req-main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.req-bar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; padding: 8px 12px; border-bottom: 1px solid var(--line); background: var(--panel); }
+.req-bar select { min-height: 24px; font-size: 12px; padding: 0 6px; }
+.req-path { font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; max-width: 100%; }
+.req-bar-spacer { flex: 1; }
+.req-note { padding: 6px 12px; font-size: 13px; border-bottom: 1px solid var(--line); background: var(--panel); }
+.req-note.warn { color: var(--warn); } .req-note.bad { color: var(--bad); }
+.req-conflict { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.req-body { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow-y: auto; }
+.req-editor { flex: 1; border: 0; border-radius: 0; resize: none; padding: 16px 20px; font-family: var(--mono); font-size: 13.5px; line-height: 1.6; background: var(--panel); }
+.req-editor:focus-visible { outline: none; }
+.badge.good { color: var(--good); border-color: var(--good); }
+.prd { padding: 20px 28px 40px; line-height: 1.65; font-size: 15px; }
 .prd > * { max-width: 760px; margin-left: auto; margin-right: auto; }
-.prd-path { font-size: 12px; margin-bottom: 8px; }
+.prd h1, .prd h2, .prd h3 { scroll-margin-top: 12px; }
 .prd-empty { padding: 32px 28px; max-width: 560px; margin: 0 auto; line-height: 1.6; }
+/* A narrow workspace: the document list goes above the document. */
+@container (max-width: 620px) {
+  .req { flex-direction: column; }
+  .req-nav { width: auto; max-height: 30%; border-right: 0; border-bottom: 1px solid var(--line); }
+  .req-outline { display: none; }
+  .req-nav-h:nth-of-type(2) { display: none; }
+  .prd { padding: 16px; }
+}
 /* The chat's name doubles as its chats menu. */
 .chat-picker { position: relative; min-width: 0; }
 .chat-picker-button { background: none; color: var(--text); display: flex; gap: 6px; align-items: center; max-width: 100%; padding: 0 6px; margin-left: -6px; }

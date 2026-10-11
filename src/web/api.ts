@@ -1,6 +1,6 @@
 // Thin typed client for the Flightdeck API. Responses are parsed with the shared contracts.
 import { z } from 'zod';
-import { BrowseResponse, Chat, FileResponse, MapResponse, PlanResponse, ProcessGroup, Project, Rule, type Decision, type MapViewId, type Mode, type NewRule } from '../shared/contracts.ts';
+import { BrowseResponse, Chat, FileResponse, RequirementDoc, RequirementsResponse, MapResponse, PlanResponse, ProcessGroup, Project, Rule, type Decision, type MapViewId, type Mode, type NewRule } from '../shared/contracts.ts';
 
 async function call<T>(schema: z.ZodType<T>, method: string, url: string, body?: unknown): Promise<T> {
   const res = await fetch(url, {
@@ -9,10 +9,15 @@ async function call<T>(schema: z.ZodType<T>, method: string, url: string, body?:
     body: body ? JSON.stringify(body) : undefined,
   });
   const json = await res.json();
-  if (!res.ok) throw new Error(json.error ?? `${res.status}`);
+  if (!res.ok) throw new ApiError(json.error ?? `${res.status}`, res.status, json);
   return schema.parse(json);
 }
 const Ok = z.object({ ok: z.boolean() });
+
+// A refused request: the message, plus the status and body for callers that act on them (a 409's current text).
+export class ApiError extends Error {
+  constructor(message: string, readonly status: number, readonly body: Record<string, unknown>) { super(message); }
+}
 
 export const api = {
   projects: () => call(z.array(Project), 'GET', '/api/projects'),
@@ -40,6 +45,13 @@ export const api = {
   revalidatePlan: (chatId: number, versionId: number) => call(PlanResponse, 'POST', `/api/chats/${chatId}/plan/revalidate`, { versionId }),
   checkPlan: (chatId: number) => call(PlanResponse, 'POST', `/api/chats/${chatId}/plan/check`),
   dropPlan: (chatId: number) => call(PlanResponse, 'POST', `/api/chats/${chatId}/plan/drop`),
+  requirements: (projectId: number) => call(RequirementsResponse, 'GET', `/api/projects/${projectId}/requirements`),
+  requirement: (projectId: number, path: string, version?: number) =>
+    call(RequirementDoc, 'GET', `/api/projects/${projectId}/requirements/doc?path=${encodeURIComponent(path)}${version ? `&version=${version}` : ''}`),
+  saveRequirement: (projectId: number, path: string, content: string, baseHash: string | null) =>
+    call(RequirementDoc, 'POST', `/api/projects/${projectId}/requirements/doc`, { path, content, baseHash }),
+  approveRequirement: (projectId: number, path: string, hash: string) =>
+    call(RequirementDoc, 'POST', `/api/projects/${projectId}/requirements/approve`, { path, hash }),
   processes: (projectId: number) => call(z.array(ProcessGroup), 'GET', `/api/projects/${projectId}/processes`),
   stopProcess: (projectId: number, pid: number) => call(Ok, 'POST', `/api/projects/${projectId}/processes/${pid}/stop`),
   rules: (projectId: number) => call(z.array(Rule), 'GET', `/api/projects/${projectId}/rules`),

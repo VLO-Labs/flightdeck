@@ -10,7 +10,7 @@ import { existsSync, mkdirSync, readdirSync, realpathSync, statSync } from 'node
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { and, desc, eq } from 'drizzle-orm';
 import {
-  ChatSettings, CreateProject, Decision, HookPayload, MapViewId, NewProject, NewRule, ProjectSettings, SendMessage,
+  ApproveRequirementDoc, ChatSettings, CreateProject, Decision, HookPayload, MapViewId, NewProject, NewRule, ProjectSettings, SaveRequirementDoc, SendMessage,
   type BrowseResponse, type Chat, type MapResponse, type Project,
 } from '../shared/contracts.ts';
 import { config } from './config.ts';
@@ -21,6 +21,7 @@ import { effectiveModel, isRunning, startTurn, stopTurn } from './runner.ts';
 import { TEMPLATE_RULES } from './rules.ts';
 import { changedSince, generatorDecision, jobFor, jobForSession, mapsDir, moveMaps, readMap, repoDirs, staleNodeIds, startGeneration, stopGeneration } from './maps.ts';
 import { viewFile } from './files.ts';
+import { RequirementsError, approveRequirement, getRequirement, listRequirements, saveRequirement } from './requirements.ts';
 import { projectProcesses, stopProcessGroup } from './processes.ts';
 import { refuseLocal } from './guard.ts';
 import { handleMcp } from './mcp.ts';
@@ -230,6 +231,35 @@ app.get('/api/projects/:id/file', c => {
   if (!project) return c.json({ error: 'not found' }, 404);
   const r = viewFile(project.path, c.req.query('path') ?? '');
   return 'error' in r ? c.json(r, 404) : c.json(r);
+});
+
+// --- Requirements (PLAN.md §11) ------------------------------------------------------------------
+// The PRD and feature specs: files in the repository, saved only if unchanged since they were opened,
+// approved by content hash into an insert-only table. Nothing here commits or touches anything else.
+function requirementsCall(c: Context, f: (p: typeof projects.$inferSelect) => unknown) {
+  const project = projectById(c.req.param('id')!);
+  if (!project) return c.json({ error: 'no such project' }, 404);
+  try {
+    return c.json(f(project) as object);
+  } catch (e) {
+    if (e instanceof RequirementsError) return c.json({ error: e.message, current: e.current }, e.status);
+    throw e;
+  }
+}
+app.get('/api/projects/:id/requirements', c => requirementsCall(c, p => listRequirements(p)));
+app.get('/api/projects/:id/requirements/doc', c => requirementsCall(c, p => {
+  const v = c.req.query('version');
+  return getRequirement(p, c.req.query('path') ?? '', v ? Number(v) : undefined);
+}));
+app.post('/api/projects/:id/requirements/doc', async c => {
+  const body = SaveRequirementDoc.safeParse(await c.req.json());
+  if (!body.success) return c.json({ error: 'path, content and baseHash are required (content up to 512 KB)' }, 400);
+  return requirementsCall(c, p => saveRequirement(p, body.data.path, body.data.content, body.data.baseHash));
+});
+app.post('/api/projects/:id/requirements/approve', async c => {
+  const body = ApproveRequirementDoc.safeParse(await c.req.json());
+  if (!body.success) return c.json({ error: 'path and hash are required' }, 400);
+  return requirementsCall(c, p => approveRequirement(p, body.data.path, body.data.hash));
 });
 
 // --- Processes running in the project --------------------------------------------------------------

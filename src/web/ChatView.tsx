@@ -855,7 +855,7 @@ function ToolInput({ name, input, rel }: { name: string; input: Record<string, u
 }
 
 function decidedText(ap: Approval): string {
-  const who = { user: 'you', rule: `rule ${ap.rule ?? ''}`.trim(), timeout: 'timeout', lock: 'edit lock', mode: 'Discuss mode' }[ap.decidedBy ?? 'user'];
+  const who = { user: 'you', rule: `rule ${ap.rule ?? ''}`.trim(), timeout: 'timeout', lock: 'edit lock', mode: 'Discuss mode', requirements: 'requirements are edited in the PRD tab' }[ap.decidedBy ?? 'user'];
   return `${ap.state === 'allowed' ? 'Allowed' : 'Denied'} by ${who}${ap.reason && ap.state === 'denied' ? ` — ${ap.reason}` : ''}`;
 }
 

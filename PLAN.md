@@ -476,6 +476,22 @@ can discuss it. `CLAUDE.md` stays the engineering instructions; the PRD says wha
    Chats menu (switch / new) on every screen size. Under 1000px one panel at a time; under 700px the
    sidebar steps aside while a chat is open (the Chats menu brings it back). Files the agent touched
    open in the Code tab instead of a dialog. The PRD tab shows `docs/requirements/PRD.md` read-only.
-3. Document lifecycle: create from a template, edit/save with conflict detection, approve, versions.
+3. **Document lifecycle — BUILT 2026-10-11.** `src/shared/requirements.ts` reads a document (outline;
+   ids where they start a heading or list item; retired by `(retired)` or `~~id~~`; code blocks and
+   HTML comments skipped) and checks a revision: no duplicate ids, none used by another document, none
+   that the file or an approved version had may vanish. `src/server/requirements.ts` reads, saves and
+   approves: only `PRD.md` and `features/<slug>.md`, every step checked with `lstat` (a symlink
+   anywhere is refused), written to a temp file and renamed. A save carries the hash it started from;
+   a mismatch is a 409 with the current text, and the UI offers *load theirs* or *save mine over it*.
+   Approvals go to `requirement_approvals` (insert-only: triggers refuse updates and deletes) with the
+   approved text, its hash and ids; state per document is draft / approved vN / changed since vN /
+   file missing. The PRD tab lists the documents and the open one's outline, renders it (comments
+   hidden), edits it as plain Markdown (⌘S saves; *+ Rule id* / *+ Criterion id* insert the next free
+   id), approves exactly the text shown, reads earlier versions read-only, and polls every 5 s for
+   changes made outside. An unsaved edit survives switching tabs or chats. The hook refuses the agent's
+   edit tools anywhere under the requirements folder, in both modes (`decidedBy: requirements`;
+   compared case-insensitively and through symlinks) — verified live: a Build turn's `Edit` of
+   `PRD.md` was refused and the file was untouched. Shell writes aren't blocked there; the hash check
+   shows them as *changed since vN*, and Build (phase 5) is to use the approved text. Nothing commits.
 4. Contextual conversations: click a rule to attach it; agent-proposed edits to accept or reject.
 5. Build gets the approved relevant requirements (with their revision); links to maps and files.

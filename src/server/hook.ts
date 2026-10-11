@@ -1,5 +1,5 @@
 // The PreToolUse hook: Claude Code calls this before every tool use and waits for the answer.
-// Order of decisions: Discuss-mode refusal (edits, and shell commands not known read-only) → edit
+// Order of decisions: requirements documents (never by the agent) → Discuss-mode refusal (edits, and shell commands not known read-only) → edit
 // lock → the project's rules → (Ask) an approval card you click.
 import { and, eq } from 'drizzle-orm';
 import type { Decision, FeedItem, HookPayload } from '../shared/contracts.ts';
@@ -10,6 +10,7 @@ import { EDIT_TOOLS, evaluate, suggestPattern } from './rules.ts';
 import { activeRunForSession } from './runner.ts';
 import { isReadOnlyShell } from '../shared/shell.ts';
 import { FLIGHTDECK_TOOLS } from './mcp.ts';
+import { isRequirementsPath } from './requirements.ts';
 
 type Answer = { decision: 'allow' | 'deny'; reason: string };
 type ApprovalItem = Extract<FeedItem, { kind: 'approval' }>;
@@ -74,6 +75,16 @@ export async function decide(p: HookPayload): Promise<Answer> {
   if (p.tool_name === 'ToolSearch') {
     record(run.runId, p, 'allowed', 'mode', undefined, 'loads tool descriptions only');
     return { decision: 'allow', reason: 'loads tool descriptions only' };
+  }
+
+  // Requirements documents change only through Flightdeck, where edits are reviewed and approved
+  // versions are kept (PLAN.md §11): the agent's edit tools are refused there in either mode.
+  const target = p.tool_input.file_path ?? p.tool_input.notebook_path;
+  if (isEdit && typeof target === 'string' && isRequirementsPath(project, target)) {
+    const reason = 'Requirements documents are edited in Flightdeck\'s PRD tab, where changes are reviewed and approved. Describe the change you would make instead; the user edits or approves it there.';
+    const row = record(run.runId, p, 'denied', 'requirements', undefined, reason);
+    feed.append(run.chatId, { ...base, approvalId: row.id, state: 'denied', decidedBy: 'requirements', reason });
+    return { decision: 'deny', reason };
   }
 
   // 0. Discuss mode never changes anything, whatever the rules say or the user would click: no file

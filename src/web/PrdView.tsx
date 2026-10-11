@@ -1,47 +1,272 @@
-// The workspace's PRD tab: the project's requirements document, read from the repository
-// (docs/requirements/PRD.md). Read-only for now; editing, approval and attaching rules to a message
-// build on this.
-import { useEffect, useState } from 'react';
+// The workspace's PRD tab (PLAN.md §11): the project's requirements — the PRD and one spec per
+// feature — read as documents, edited as plain Markdown, approved revision by revision. The files live
+// in the repository (docs/requirements); Flightdeck keeps what was approved, so a later edit is a new
+// draft and never changes an approved version.
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Markdown, { type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import type { FileResponse, Project } from '../shared/contracts.ts';
-import { api } from './api.ts';
+import type { Project, RequirementDoc, RequirementDocSummary, RequirementsResponse } from '../shared/contracts.ts';
+import { FEATURE_TEMPLATE, PRD_FILE, PRD_TEMPLATE, featureSlug, nextId, parseRequirements } from '../shared/requirements.ts';
+import { ApiError, api } from './api.ts';
 
-// In a multi-repo folder the requirements live in the repository that keeps the maps.
-export const prdPath = (project: Project) => `${project.mapsRepo ? `${project.mapsRepo}/` : ''}docs/requirements/PRD.md`;
+// An edit in progress, kept while you look at another tab or chat: per project and document.
+type Editing = { text: string; baseHash: string | null };
+const edits = new Map<string, Editing>();
+const lastDoc = new Map<number, string>(); // per project: the document last open
 
 export function PrdView({ project }: { project: Project }) {
-  const path = prdPath(project);
-  const [f, setF] = useState<FileResponse | null>(null);
-  const [missing, setMissing] = useState(false);
-  useEffect(() => {
-    let gone = false;
-    setF(null);
-    setMissing(false);
-    api.file(project.id, path).then(r => !gone && setF(r)).catch(() => !gone && setMissing(true));
-    return () => { gone = true; };
-  }, [project.id, path]);
+  const [list, setList] = useState<RequirementsResponse | null>(null);
+  const [path, setPath] = useState(() => lastDoc.get(project.id) ?? PRD_FILE);
+  const [doc, setDoc] = useState<RequirementDoc | null>(null);
+  const [version, setVersion] = useState<number | undefined>(); // an approved version being read
+  const key = `${project.id}:${path}`;
+  const [editing, setEditingState] = useState<Editing | null>(() => edits.get(key) ?? null);
+  const setEditing = (e: Editing | null) => { if (e) edits.set(key, e); else edits.delete(key); setEditingState(e); };
+  const [conflict, setConflict] = useState<{ content: string | null; hash: string | null } | null>(null);
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
+  const body = useRef<HTMLDivElement>(null);
 
-  if (missing || (f && f.kind !== 'file')) {
-    return (
-      <div className="prd-empty">
-        <p><strong>No requirements document yet.</strong></p>
-        <p className="muted">
-          The PRD lives in the repository at <code>{path}</code>, with feature specs beside it in
-          <code> features/</code>. Plain Markdown, versioned with the code.
-        </p>
-      </div>
-    );
-  }
-  if (!f) return <div className="prd-empty muted">Loading…</div>;
+  useEffect(() => { lastDoc.set(project.id, path); setEditingState(edits.get(key) ?? null); setConflict(null); setError(''); }, [key]);
+
+  const loadList = useCallback(() => api.requirements(project.id).then(setList).catch(e => setError((e as Error).message)), [project.id]);
+  const loadDoc = useCallback(() => {
+    api.requirement(project.id, path, version).then(setDoc).catch(e => setError((e as Error).message));
+  }, [project.id, path, version]);
+  useEffect(() => { void loadList(); }, [loadList]);
+  useEffect(() => { setDoc(null); loadDoc(); }, [loadDoc]);
+
+  // The files can change outside Flightdeck (an editor, git): look every few seconds, and follow the
+  // change unless you are editing — then say so before you save over it.
+  useEffect(() => {
+    const t = setInterval(() => void loadList(), 5000);
+    return () => clearInterval(t);
+  }, [loadList]);
+  const onDisk = list?.docs.find(d => d.path === path);
+  const changedOnDisk = Boolean(doc && onDisk && onDisk.hash !== doc.summary.hash);
+  useEffect(() => { if (changedOnDisk && !editing) loadDoc(); }, [changedOnDisk, editing, loadDoc]);
+
+  // The list is polled, so it knows first when the file changed on disk; the loaded document, before it loads.
+  const summary = onDisk ?? doc?.summary;
+  const shown = version !== undefined ? doc?.viewing?.content ?? null : editing ? editing.text : doc?.content ?? null;
+  const outline = useMemo(() => (shown ? parseRequirements(shown).outline : []), [shown]);
+  const allIds = useMemo(() => list?.docs.flatMap(d => d.ids) ?? [], [list]);
+  const isPrd = path === PRD_FILE;
+
+  const open = (p: string) => { setVersion(undefined); setPath(p); };
+  const startNew = (p: string, text: string) => { open(p); edits.set(`${project.id}:${p}`, { text, baseHash: null }); };
+
+  const save = async (baseHash: string | null) => {
+    if (!editing) return;
+    setBusy(true);
+    setError('');
+    try {
+      const d = await api.saveRequirement(project.id, path, editing.text, baseHash);
+      setDoc(d);
+      setEditing(null);
+      setConflict(null);
+      void loadList();
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 409) setConflict((e.body.current as typeof conflict) ?? { content: null, hash: null });
+      else setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  const approve = async () => {
+    if (!doc?.summary.hash) return;
+    setBusy(true);
+    setError('');
+    try {
+      setDoc(await api.approveRequirement(project.id, path, doc.summary.hash));
+      void loadList();
+    } catch (e) {
+      setError((e as Error).message);
+      loadDoc();
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const scrollTo = (i: number) => {
+    const hs = body.current?.querySelectorAll('h1, h2, h3, h4, h5, h6');
+    hs?.[i]?.scrollIntoView({ block: 'start', behavior: 'smooth' });
+  };
+  const insertId = () => {
+    const ta = body.current?.querySelector('textarea');
+    if (!ta || !editing) return;
+    const id = nextId(isPrd ? 'BR' : 'AC', [...allIds, ...parseRequirements(editing.text).items.map(i => i.id)]);
+    const snippet = isPrd ? `\n### ${id} · ` : `\n- **${id}** `;
+    const at = ta.selectionStart;
+    const text = editing.text.slice(0, at) + snippet + editing.text.slice(ta.selectionEnd);
+    setEditing({ ...editing, text });
+    requestAnimationFrame(() => { ta.focus(); ta.selectionStart = ta.selectionEnd = at + snippet.length; });
+  };
+
+  const noFile = doc && doc.content === null;
   return (
-    <article className="prd md">
-      <div className="prd-path muted mono">{path}</div>
-      <Markdown remarkPlugins={[remarkGfm]} components={MD_COMPONENTS}>{f.content}</Markdown>
-    </article>
+    <div className="req">
+      <nav className="req-nav" aria-label="Requirements">
+        <div className="req-nav-h">Documents</div>
+        {(list?.docs ?? []).map(d => (
+          <button
+            key={d.path} className={`req-doc-item ${d.path === path ? 'active' : ''}`} aria-current={d.path === path ? 'page' : undefined}
+            disabled={Boolean(editing) && d.path !== path} title={editing && d.path !== path ? 'Save or cancel your edit first' : d.path}
+            onClick={() => open(d.path)}
+          >
+            <span className="req-doc-name">{d.path === PRD_FILE ? 'PRD' : d.title ?? d.path.slice(9, -3)}</span>
+            <StateBadge s={d} compact />
+          </button>
+        ))}
+        {!list?.docs.some(d => d.path === path) && <div className="req-doc-item active"><span className="req-doc-name">{path.slice(9, -3)}</span><span className="badge">new</span></div>}
+        <NewFeature disabled={Boolean(editing)} docs={list?.docs ?? []} onCreate={(p, name) => startNew(p, FEATURE_TEMPLATE(name))} onOpen={open} />
+        {outline.length > 0 && (
+          <>
+            <div className="req-nav-h">Outline</div>
+            {outline.map((o, i) => (
+              <button key={`${o.line}`} className={`req-outline l${Math.min(o.level, 4)}`} onClick={() => scrollTo(i)} title={o.title}>
+                {o.title}
+              </button>
+            ))}
+          </>
+        )}
+      </nav>
+
+      <div className="req-main">
+        <div className="req-bar">
+          <span className="mono muted req-path" title={`${list?.dir ?? ''}/${path}`}>{list?.dir}/{path}</span>
+          {summary && <StateBadge s={summary} />}
+          {summary?.git === 'untracked' && <span className="badge" title="Not committed yet: commit it like any other file.">not in git yet</span>}
+          {summary?.git === 'modified' && <span className="badge" title="Changed since the last commit.">uncommitted</span>}
+          <span className="req-bar-spacer" />
+          {doc && doc.versions.length > 0 && !editing && (
+            <select value={version ?? ''} onChange={e => setVersion(e.target.value ? Number(e.target.value) : undefined)} aria-label="Version">
+              <option value="">The file now</option>
+              {doc.versions.map((v, i) => (
+                <option key={v.version} value={v.version}>
+                  v{v.version} · {i === 0 ? 'approved' : 'superseded'} {new Date(v.approvedAt).toLocaleDateString([], { day: 'numeric', month: 'short' })}
+                </option>
+              ))}
+            </select>
+          )}
+          {!editing && version === undefined && doc?.content != null && (
+            <button className="small ghost" onClick={() => setEditing({ text: doc.content!, baseHash: doc.summary.hash })}>Edit</button>
+          )}
+          {!editing && version === undefined && doc?.content != null && (doc.summary.state === 'draft' || doc.summary.state === 'changed') && (
+            <button
+              className="small" disabled={busy || changedOnDisk}
+              title={`Approve exactly this text as v${(doc.summary.approved?.version ?? 0) + 1}. Build uses the approved version; later edits become a new draft.`}
+              onClick={approve}
+            >
+              Approve as v{(doc.summary.approved?.version ?? 0) + 1}
+            </button>
+          )}
+          {editing && (
+            <>
+              <button className="small ghost" onClick={insertId} title={`Insert the next free ${isPrd ? 'rule' : 'criterion'} id at the cursor`}>
+                + {isPrd ? 'Rule' : 'Criterion'} id
+              </button>
+              <button className="small ghost" disabled={busy} onClick={() => { setEditing(null); setConflict(null); setError(''); if (noFile && !list?.docs.some(d => d.path === path)) open(PRD_FILE); }}>Cancel</button>
+              <button className="small" disabled={busy || Boolean(conflict)} onClick={() => save(editing.baseHash)}>{busy ? 'Saving…' : 'Save'}</button>
+            </>
+          )}
+        </div>
+
+        {summary?.state === 'changed' && version === undefined && (
+          <div className="req-note warn">
+            Changed since approved v{summary.approved?.version}. Until you approve this revision, Build keeps using v{summary.approved?.version}.
+          </div>
+        )}
+        {summary?.state === 'missing' && version === undefined && (
+          <div className="req-note bad">The file is gone from the repository; approved v{summary.approved?.version} is kept here. Pick it above to read it.</div>
+        )}
+        {version !== undefined && doc && (
+          <div className="req-note">
+            Reading approved v{version}{doc.versions[0]?.version === version ? ' (the current approval)' : `, superseded by v${doc.versions[0]?.version}`}. Read-only.
+          </div>
+        )}
+        {editing && changedOnDisk && !conflict && (
+          <div className="req-note warn">The file changed on disk while you were editing. Saving will ask what to keep.</div>
+        )}
+        {conflict && editing && (
+          <div className="req-note warn req-conflict" role="alert">
+            <span>{conflict.content === null ? 'The file was deleted' : 'The file changed on disk'} since you started editing.</span>
+            {conflict.content !== null && (
+              <button className="small ghost" onClick={() => { setEditing({ text: conflict.content!, baseHash: conflict.hash }); setConflict(null); }}>
+                Load theirs (drop my edit)
+              </button>
+            )}
+            <button className="small" onClick={() => save(conflict.hash)}>Save mine over it</button>
+          </div>
+        )}
+        {error && <div className="req-note bad" role="alert">{error}</div>}
+
+        <div className="req-body" ref={body}>
+          {editing ? (
+            <textarea
+              className="req-editor" value={editing.text} spellCheck
+              aria-label={`Edit ${path}`}
+              onChange={e => setEditing({ ...editing, text: e.target.value })}
+              onKeyDown={e => { if ((e.metaKey || e.ctrlKey) && e.key === 's') { e.preventDefault(); void save(editing.baseHash); } }}
+            />
+          ) : !doc ? (
+            <div className="prd-empty muted">Loading…</div>
+          ) : shown !== null ? (
+            <article className="prd md"><Markdown remarkPlugins={[remarkGfm]} components={MD_COMPONENTS} skipHtml>{shown}</Markdown></article>
+          ) : noFile && isPrd ? (
+            <div className="prd-empty">
+              <p><strong>No requirements document yet.</strong></p>
+              <p className="muted">
+                The PRD says what the software must do: who it's for, its goals and scope, and business rules with
+                ids that never change. It's a Markdown file in the repository at <code>{list?.dir}/{PRD_FILE}</code>,
+                with a spec per feature beside it in <code>features/</code>, so it's versioned with the code and
+                readable anywhere.
+              </p>
+              <button onClick={() => setEditing({ text: PRD_TEMPLATE(project.name), baseHash: null })}>Start the PRD</button>
+            </div>
+          ) : (
+            <div className="prd-empty muted">No file.</div>
+          )}
+        </div>
+      </div>
+    </div>
   );
 }
 
+const STATE: Record<RequirementDocSummary['state'], { label: (v?: number) => string; tone: string; title: string }> = {
+  draft: { label: () => 'draft', tone: '', title: 'Never approved.' },
+  approved: { label: v => `approved v${v}`, tone: 'good', title: 'The file is exactly the approved version.' },
+  changed: { label: v => `changed since v${v}`, tone: 'warn', title: 'Edited since the last approval: a draft revision.' },
+  missing: { label: () => 'file missing', tone: 'bad', title: 'Approved before; the file is gone.' },
+};
+function StateBadge({ s, compact }: { s: RequirementDocSummary; compact?: boolean }) {
+  const st = STATE[s.state];
+  const label = compact && s.state === 'changed' ? 'changed' : st.label(s.approved?.version);
+  return <span className={`badge ${st.tone}`} title={st.title}>{label}</span>;
+}
+
+function NewFeature({ docs, disabled, onCreate, onOpen }: {
+  docs: RequirementDocSummary[]; disabled: boolean; onCreate: (path: string, name: string) => void; onOpen: (path: string) => void;
+}) {
+  const [name, setName] = useState<string | null>(null);
+  if (name === null) return <button className="link req-new" disabled={disabled} onClick={() => setName('')}>+ Feature spec</button>;
+  const slug = featureSlug(name);
+  const p = `features/${slug}.md`;
+  const exists = docs.some(d => d.path === p);
+  return (
+    <form className="req-new-form" onSubmit={e => { e.preventDefault(); if (!slug) return; if (exists) onOpen(p); else onCreate(p, name.trim()); setName(null); }}>
+      <input autoFocus value={name} onChange={e => setName(e.target.value)} placeholder="Feature name" aria-label="Feature name"
+        onKeyDown={e => e.key === 'Escape' && setName(null)} />
+      {slug && <span className="muted mono req-new-path">{p}{exists ? ' (exists: open it)' : ''}</span>}
+      <div className="form-actions">
+        <button type="submit" className="small" disabled={!slug}>{exists ? 'Open' : 'Create'}</button>
+        <button type="button" className="small ghost" onClick={() => setName(null)}>Cancel</button>
+      </div>
+    </form>
+  );
+}
+
+// Raw HTML is not drawn (skipHtml): the comments that guide writers stay out of the reading view.
 // Links open in a new tab, as in the chat: following one must not leave Flightdeck.
 const MD_COMPONENTS: Components = {
   a: ({ node: _node, ...props }) => <a {...props} target="_blank" rel="noopener noreferrer" />,
