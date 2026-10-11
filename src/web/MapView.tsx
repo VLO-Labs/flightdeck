@@ -4,7 +4,10 @@ import { useEffect, useMemo, useState } from 'react';
 import { MAP_VIEWS, type MapResponse, type MapViewId, type Project } from '../shared/contracts.ts';
 import { api } from './api.ts';
 import { FileViewer } from './FileViewer.tsx';
-import { Crumbs, MapCanvas } from './MapCanvas.tsx';
+import { Crumbs, MapCanvas, liftEdges } from './MapCanvas.tsx';
+
+// The details panel's width; it floats over the canvas, which pans selected cards out from under it.
+const PANEL_W = 340;
 
 export type NodeRef = { view: MapViewId; nodeId: string; label: string };
 
@@ -31,6 +34,7 @@ export function MapView({ project, onAskInChat }: { project: Project; onAskInCha
   const [path, setPath] = useState<string[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
   const [file, setFile] = useState<string | null>(null);
+  const [focus, setFocus] = useState<{ id: string; seq: number } | null>(null);
 
   useEffect(() => { setPath([]); setSelected(null); }, [project.id, view]);
 
@@ -40,6 +44,18 @@ export function MapView({ project, onAskInChat }: { project: Project; onAskInCha
   const byId = useMemo(() => new Map((map?.nodes ?? []).map(n => [n.id, n])), [map]);
   const sel = selected ? byId.get(selected) : undefined;
   const hasChildren = (id: string) => (map?.nodes ?? []).some(n => n.parent === id);
+  // The selected node's connections at this level, as drawn: what it uses, and what uses it.
+  const links = useMemo(() => {
+    if (!map || !sel) return { uses: [], usedBy: [], both: [] };
+    const lifted = liftEdges(map.nodes, map.edges, path.at(-1) ?? null);
+    const row = (other: string, labels: string[], twoWay: boolean) => ({ id: other, label: byId.get(other)?.label ?? other, labels, twoWay });
+    return {
+      uses: lifted.filter(e => e.from === sel.id && !e.twoWay).map(e => row(e.to, e.labels, false)),
+      usedBy: lifted.filter(e => e.to === sel.id && !e.twoWay).map(e => row(e.from, e.labels, false)),
+      both: lifted.filter(e => e.twoWay && (e.from === sel.id || e.to === sel.id)).map(e => row(e.from === sel.id ? e.to : e.from, e.labels, true)),
+    };
+  }, [map, sel, path, byId]);
+  const goTo = (id: string) => { setSelected(id); setFocus(f => ({ id, seq: (f?.seq ?? 0) + 1 })); };
 
   const generate = async () => {
     setError('');
@@ -105,18 +121,16 @@ export function MapView({ project, onAskInChat }: { project: Project; onAskInCha
             </div>
           )}
           {map && (
-            <MapCanvas map={map} view={view} stale={stale} path={path} onPath={setPath} selected={selected} onSelect={setSelected} />
+            <MapCanvas map={map} view={view} stale={stale} path={path} onPath={setPath} selected={selected} onSelect={setSelected} focus={focus} remember coveredRight={PANEL_W} />
           )}
         </div>
 
         {sel && (
-          <aside className="map-panel">
-            <div className="row-between">
-              <strong>{sel.label}</strong>
-              <span className="badge">{sel.kind}</span>
-            </div>
+          <aside className="map-panel" style={{ width: PANEL_W }}>
+            <div className="panel-kind">{sel.kind}</div>
+            <h2 className="panel-title">{sel.label}</h2>
             <p>{sel.summary}</p>
-            {stale.has(sel.id) && <p className="warn-text">Files behind this changed since the map was made.</p>}
+            {stale.has(sel.id) && <p className="warn-text">Files behind this changed since the map was made, so this may be outdated.</p>}
             <div className="panel-actions">
               {hasChildren(sel.id) && <button onClick={() => { setPath([...path, sel.id]); setSelected(null); }}>Open ▸</button>}
               <button onClick={() => onAskInChat([{ view, nodeId: sel.id, label: sel.label }])}>Discuss in a new chat</button>
@@ -131,6 +145,16 @@ export function MapView({ project, onAskInChat }: { project: Project; onAskInCha
                 </table>
               </>
             )}
+            {(links.uses.length > 0 || links.usedBy.length > 0 || links.both.length > 0) && (
+              <>
+                {links.uses.length > 0 && <div className="label"><span className="dir-out">→</span> Uses</div>}
+                {links.uses.map(l => <LinkRow key={`u${l.id}`} l={l} onGo={goTo} />)}
+                {links.usedBy.length > 0 && <div className="label"><span className="dir-in">←</span> Used by</div>}
+                {links.usedBy.map(l => <LinkRow key={`b${l.id}`} l={l} onGo={goTo} />)}
+                {links.both.length > 0 && <div className="label"><span className="dir-out">⇄</span> Both ways</div>}
+                {links.both.map(l => <LinkRow key={`w${l.id}`} l={l} onGo={goTo} />)}
+              </>
+            )}
             <div className="label">Files</div>
             {sel.files.length === 0 && <div className="muted">None recorded.</div>}
             {sel.files.map(f => (
@@ -142,5 +166,14 @@ export function MapView({ project, onAskInChat }: { project: Project; onAskInCha
 
       {file !== null && <FileViewer project={project} path={file} onOpen={setFile} onClose={() => setFile(null)} />}
     </div>
+  );
+}
+
+function LinkRow({ l, onGo }: { l: { id: string; label: string; labels: string[]; twoWay: boolean }; onGo: (id: string) => void }) {
+  return (
+    <button className="link-row" onClick={() => onGo(l.id)} title={l.labels.join('\n')}>
+      <span className="link-row-name">{l.label}</span>
+      {l.labels.length > 0 && <span className="link-row-what">{l.labels.join(' · ')}</span>}
+    </button>
   );
 }

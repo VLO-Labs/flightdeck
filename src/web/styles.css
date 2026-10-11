@@ -154,12 +154,14 @@ button.deny, button.stop { background: var(--bad); color: #fff; }
 .job-line.failed { color: var(--bad); }
 .crumbs { padding: 6px 16px; font-size: 13px; border-bottom: 1px solid var(--line); }
 .crumbs button.link { display: inline; padding: 0; }
-.map-body { flex: 1; display: flex; min-height: 0; }
+.map-body { flex: 1; display: flex; min-height: 0; position: relative; }
 .map-canvas { flex: 1; position: relative; min-width: 0; }
+.map-flow { position: absolute; inset: 0; }
 .map-canvas .empty { position: absolute; inset: 0; padding: 24px; text-align: center; }
 .map-canvas .empty p { max-width: 520px; margin: 8px auto; }
 .map-panel {
-  width: 320px; border-left: 1px solid var(--line); background: var(--panel); padding: 14px;
+  position: absolute; top: 0; right: 0; bottom: 0; z-index: 5; max-width: 90vw;
+  border-left: 1px solid var(--line); background: var(--panel); padding: 14px; box-shadow: -6px 0 18px rgba(0,0,0,.18);
   overflow-y: auto; display: flex; flex-direction: column; gap: 8px;
 }
 .map-panel p { margin: 0; }
@@ -168,23 +170,56 @@ table.fields { border-collapse: collapse; font-size: 12.5px; }
 table.fields td { padding: 2px 8px 2px 0; vertical-align: top; }
 
 .map-node {
-  background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px;
-  font-size: 12.5px; color: var(--text); box-shadow: 0 1px 2px rgba(0,0,0,.06); cursor: pointer;
+  background: var(--panel); border: 1px solid var(--line); border-left: 3px solid var(--cat, var(--line)); border-radius: 8px;
+  padding: 8px 10px; color: var(--text); box-shadow: 0 1px 2px rgba(0,0,0,.08); cursor: pointer;
+  display: flex; flex-direction: column; overflow: hidden; transition: opacity .15s;
 }
 .map-node.selected { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent); }
-.map-node.stale { border-color: var(--warn); }
-.map-node-head { display: flex; justify-content: space-between; gap: 6px; align-items: baseline; }
-.map-node-label { font-weight: 600; font-size: 13px; }
-.map-node-kind { font-size: 10.5px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+.map-node.stale { border-top-color: var(--warn); border-right-color: var(--warn); border-bottom-color: var(--warn); }
+.map-node.dim { opacity: .35; }
+.map-node-kind { display: flex; justify-content: space-between; gap: 6px; font-size: 10.5px; line-height: 15px; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; }
+.map-node-kind .stale-tag, .map-node-kind .heat-tag { text-transform: none; letter-spacing: 0; font-size: 11px; }
+.map-node-label {
+  font-weight: 600; font-size: 14.5px; line-height: 19px; overflow-wrap: anywhere;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
 .map-node-summary {
-  color: var(--muted); margin-top: 2px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+  color: var(--muted); font-size: 12.5px; line-height: 17px; margin-top: 2px;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
 }
 .map-node-fields { margin-top: 4px; font-family: var(--mono); font-size: 11px; line-height: 17px; }
 .map-node-fields > div { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.map-node-foot { display: flex; justify-content: space-between; margin-top: 4px; font-size: 11px; color: var(--accent); }
-.stale-tag { color: var(--warn); }
-.map-node.kind-external { border-style: dashed; }
-.map-node.kind-datastore, .map-node.kind-queue { background: var(--code); }
+.map-node-foot { display: flex; justify-content: space-between; gap: 6px; margin-top: auto; padding-top: 2px; font-size: 11.5px; line-height: 18px; color: var(--accent); }
+.map-node-foot .inside { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.stale-tag { color: var(--warn); white-space: nowrap; }
+/* Edges follow ELK's routes, not the handles; keep the handles for React Flow but don't draw them. */
+.map-node .react-flow__handle { opacity: 0; pointer-events: none; }
+/* Category: a subtle left edge, nothing louder. */
+.map-node.kind-ui, .map-node.kind-app { --cat: var(--accent); }
+.map-node.kind-service, .map-node.kind-worker { --cat: var(--good); }
+.map-node.kind-datastore, .map-node.kind-queue { --cat: var(--warn); background: var(--code); }
+.map-node.kind-external { --cat: var(--muted); border-style: dashed; border-left-style: solid; }
+
+/* Edges, drawn along ELK's routes. Direction is in the arrowheads; colour only marks relevance. */
+.react-flow__edge-path.route { stroke: var(--muted); stroke-width: 1.4; transition: stroke .15s, opacity .15s; }
+.react-flow__edge-path.route-out, .react-flow__edge-path.route-both { stroke: var(--accent); stroke-width: 2; }
+.react-flow__edge-path.route-in { stroke: var(--good); stroke-width: 2; }
+.react-flow__edge-path.route-hover { stroke: var(--text); stroke-width: 2; }
+.react-flow__edge-path.route-dim { opacity: .25; }
+
+.panel-kind { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; }
+.panel-title { font-size: 17px; line-height: 1.3; margin: 0; overflow-wrap: anywhere; }
+.dir-out { color: var(--accent); } .dir-in { color: var(--good); }
+.link-row {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 1px; width: 100%; text-align: left;
+  background: none; color: var(--text); border: 1px solid transparent; border-radius: 6px; padding: 4px 6px;
+}
+.link-row:hover { border-color: var(--line); background: var(--code); }
+.link-row-name { font-weight: 500; }
+.link-row-what {
+  font-size: 12px; color: var(--muted);
+  display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;
+}
 
 .viewer-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,.35); display: grid; place-items: center; z-index: 50; padding: 16px; }
 .viewer {
@@ -239,8 +274,6 @@ button.ghost { background: none; color: var(--accent); border: 1px solid var(--l
   .chat-map { position: absolute; right: 0; top: 0; bottom: 0; width: min(92vw, 520px); z-index: 10; box-shadow: -4px 0 16px rgba(0,0,0,.15); }
 }
 @media (max-width: 700px) {
-  .map-panel { position: absolute; right: 0; top: 0; bottom: 0; width: min(320px, 90vw); z-index: 5; }
-  .map-body { position: relative; }
   .app { grid-template-columns: 1fr; grid-template-rows: auto 1fr; }
   .sidebar { border-right: 0; border-bottom: 1px solid var(--line); max-height: 40vh; }
   .feed, .composer, .chat-header { padding-left: 16px; padding-right: 16px; }
