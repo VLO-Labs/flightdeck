@@ -133,6 +133,7 @@ export function startTurn(chatId: number, text: string, context: ContextNode[] =
 
   let resultSeen = false;
   let failure: string | undefined;
+  let endTimer: NodeJS.Timeout | undefined;
   let stderr = '';
   proc.stderr!.on('data', d => (stderr += d.toString()).length > 4000 && (stderr = stderr.slice(-4000)));
 
@@ -147,6 +148,13 @@ export function startTurn(chatId: number, text: string, context: ContextNode[] =
     if (!parsed.success) return;
     const ev = parsed.data as ClaudeEvent;
 
+    // A resumed session whose last turn left a background task running first replays a stale,
+    // empty result, then inits again for the real turn. That result didn't end this turn.
+    if (ev.type === 'system' && ev.subtype === 'init' && resultSeen) {
+      clearTimeout(endTimer);
+      resultSeen = false;
+      failure = undefined;
+    }
     // Tripwire: anything but the subscription login aborts the run before it does any work.
     if (ev.type === 'system' && ev.subtype === 'init' && ev.apiKeySource !== 'none') {
       failure = `refused: session is not on the subscription (apiKeySource=${String(ev.apiKeySource)})`;
@@ -160,7 +168,7 @@ export function startTurn(chatId: number, text: string, context: ContextNode[] =
       // Judge by is_error, never by subtype (a bad-key run reports subtype "success").
       if (ev.is_error) failure = typeof ev.result === 'string' ? ev.result : `run ended with ${ev.subtype}`;
       // `result` ends the turn but background tasks keep the process alive; Phase 1 ends them.
-      setTimeout(() => proc.exitCode === null && proc.kill('SIGINT'), 2000);
+      endTimer = setTimeout(() => proc.exitCode === null && proc.kill('SIGINT'), 2000);
     }
   });
 
