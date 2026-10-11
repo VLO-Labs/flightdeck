@@ -84,6 +84,8 @@ pre { background: var(--code); padding: 8px; border-radius: 6px; overflow-x: aut
 
 .main { min-width: 0; height: 100%; overflow: hidden; }
 .empty { display: grid; place-items: center; height: 100%; color: var(--muted); }
+.crash { max-width: 520px; text-align: center; }
+.crash pre { text-align: left; color: var(--bad); }
 
 .chat { display: flex; flex-direction: column; height: 100%; }
 .chat-header {

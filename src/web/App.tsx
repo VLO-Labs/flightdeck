@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { BrowseResponse, Chat, Project } from '../shared/contracts.ts';
 import { api } from './api.ts';
 import { tildify } from './paths.ts';
+import { ErrorBoundary } from './ErrorBoundary.tsx';
 import { STACKS } from '../shared/stacks.ts';
 import { ChatView } from './ChatView.tsx';
 import { RulesView } from './RulesView.tsx';
@@ -129,6 +130,8 @@ export function App() {
       </aside>
 
       <main className="main">
+        {/* Keyed by screen, so moving elsewhere also clears a crash. */}
+        <ErrorBoundary key={view.kind === 'chat' ? `chat:${view.chatId}` : view.kind}>
         {view.kind === 'chat' && chat && project && (
           <ChatView
             key={chat.id} chat={chat} project={project} onChanged={refreshChats}
@@ -159,6 +162,7 @@ export function App() {
             {project ? 'Open the map, a chat, or start a new chat.' : 'Add a project: a git repository on the box.'}
           </div>
         )}
+        </ErrorBoundary>
       </main>
     </div>
   );

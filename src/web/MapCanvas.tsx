@@ -168,6 +168,9 @@ export function MapCanvas({
 }) {
   const level = path.at(-1) ?? null;
   const levelKey = `${view}:${level ?? ''}`;
+  // A layout belongs to one version of the map: after a refresh, node ids can change, and drawing
+  // the new nodes with the old layout would look up positions that don't exist.
+  const layoutKey = `${map.generatedAt}:${levelKey}`;
   const [layout, setLayout] = useState<Layout | null>(null);
   const [hoverEdge, setHoverEdge] = useState<string | null>(null);
   const flow = useRef<ReactFlowInstance<Node<CardData>, Edge<RouteData>> | null>(null);
@@ -220,17 +223,17 @@ export function MapCanvas({
         const points = s ? [s.startPoint, ...(s.bendPoints ?? []), s.endPoint] : [];
         return [e.id, { points, labelAt: longestMidpoint(points) }];
       }));
-      setLayout({ key: levelKey, boxes, routes, lifted });
+      setLayout({ key: layoutKey, boxes, routes, lifted });
     });
     return () => { cancelled = true; };
-  }, [map, level, view, levelKey, visible, childLabels]);
+  }, [map, level, view, layoutKey, visible, childLabels]);
 
   // Place the view once a level's layout is ready: where it was last left, or fitted. Done here
   // rather than with React Flow's fitView prop, which waits for a measuring pass that pre-measured
   // nodes never trigger (it then fits late, on some unrelated re-render).
   const vpKey = `${map.generatedAt}:${levelKey}`;
   useEffect(() => {
-    if (!layout || layout.key !== levelKey) return;
+    if (!layout || layout.key !== layoutKey) return;
     const saved = remember ? viewports.get(vpKey) : undefined;
     // Fit from the layout itself (React Flow's fitView waits on a measuring pass these pre-measured
     // nodes never get). Never so far out that card text stops being readable; pan to see the rest.
@@ -298,7 +301,7 @@ export function MapCanvas({
     return out;
   }, [heat, map, level]);
 
-  if (!layout || layout.key !== levelKey) return null;
+  if (!layout || layout.key !== layoutKey) return null;
 
   // Selection: the selected card's edges are drawn by direction (uses / used by), its neighbours
   // stay clear, everything else steps back.
@@ -310,7 +313,7 @@ export function MapCanvas({
   }
   const hovered = hoverEdge ? layout.lifted[Number(hoverEdge.slice(1))] : undefined;
 
-  const nodes: Node<CardData>[] = visible.map(n => {
+  const nodes: Node<CardData>[] = visible.filter(n => layout.boxes.has(n.id)).map(n => {
     const b = layout.boxes.get(n.id)!;
     const related = !sel || n.id === sel || neighbours.has(n.id) || (hovered && (hovered.from === n.id || hovered.to === n.id));
     return {
