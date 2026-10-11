@@ -1,6 +1,8 @@
 #!/bin/bash
-# Stops the local Flightdeck server (a chat turn in flight is marked "stopped" on next start).
+# Stops Flightdeck: quits the app (which stops its server). Falls back to the process on the port.
 PORT="${FLIGHTDECK_PORT:-8100}"
+osascript -e 'if application id "com.vlolabs.flightdeck" is running then tell application id "com.vlolabs.flightdeck" to quit' 2>/dev/null
+for _ in $(seq 1 30); do lsof -ti "tcp:$PORT" -sTCP:LISTEN >/dev/null 2>&1 || break; sleep 0.2; done
 pids="$(lsof -ti "tcp:$PORT" -sTCP:LISTEN 2>/dev/null)"
-if [ -z "$pids" ]; then echo "Flightdeck isn't running."; exit 0; fi
-kill $pids && echo "Flightdeck stopped."
+[ -n "$pids" ] && kill $pids
+echo "Flightdeck stopped."
