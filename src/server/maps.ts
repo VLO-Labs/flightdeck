@@ -2,7 +2,7 @@
 // Flightdeck validates it and writes `.flightdeck/<view>.json` into the repo.
 import { spawn, execFileSync, type ChildProcess } from 'node:child_process';
 import { createInterface } from 'node:readline';
-import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -151,7 +151,13 @@ export function staleNodeIds(nodes: MapNode[], changed: string[]): string[] {
 function scratchIndex(repo: string): { env: NodeJS.ProcessEnv; done: () => void } {
   const file = join(tmpdir(), `flightdeck-index-${randomUUID()}`);
   const real = join(repo, '.git', 'index');
-  if (existsSync(real)) copyFileSync(real, file);
+  if (existsSync(real)) {
+    copyFileSync(real, file);
+    // Keep the index's own mtime: git compares it with each file's mtime to catch edits made in the
+    // same instant the index was written ("racy git"). A fresh mtime makes those edits look clean.
+    const st = statSync(real);
+    utimesSync(file, st.atime, st.mtime);
+  }
   return {
     env: { ...process.env, GIT_INDEX_FILE: file, GIT_OPTIONAL_LOCKS: '0' },
     done: () => rmSync(file, { force: true }),
