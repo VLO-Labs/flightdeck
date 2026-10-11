@@ -31,6 +31,13 @@ const DISCUSS_PROMPT =
   'plan is ready, say so: the user switches the chat to BUILD mode to implement it, and you will ' +
   'keep this conversation as context.';
 
+// Every turn states its mode: a resumed session still holds the earlier Discuss turns (and the
+// agent's own "switch to Build to implement" replies), so without this a Build turn reads as Discuss.
+const BUILD_PROMPT =
+  'You are in Flightdeck BUILD mode. You may edit files and run commands to implement what the user ' +
+  'asks. If earlier turns in this conversation were in DISCUSS mode, the user has since switched the ' +
+  'chat to BUILD: those read-only limits no longer apply, so go ahead and implement.';
+
 export function effectiveModel(
   chat: typeof chats.$inferSelect, project: typeof projects.$inferSelect, mode: Mode,
 ): string {
@@ -110,7 +117,7 @@ export function startTurn(chatId: number, text: string, context: ContextNode[] =
     '--settings', hookSettings(),
     '--model', model,
   ];
-  if (mode === 'discuss') args.push('--append-system-prompt', DISCUSS_PROMPT);
+  args.push('--append-system-prompt', mode === 'build' ? BUILD_PROMPT : DISCUSS_PROMPT);
 
   // stdin closed: otherwise the CLI waits 3 s for piped input and prints a non-JSON warning.
   const proc = spawn(config.claudeBin, args, { cwd: project.path, env: childEnv(), stdio: ['ignore', 'pipe', 'pipe'] });
