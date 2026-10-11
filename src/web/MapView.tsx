@@ -1,6 +1,6 @@
 // The map screen: a project's diagrams, generated from its code. Navigate by drilling into nodes;
 // see what changed since the map was made; open the files behind any node; take a node to a chat.
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { MAP_VIEWS, type MapResponse, type MapViewId, type Project } from '../shared/contracts.ts';
 import { api } from './api.ts';
 import { FileViewer, type MapPlace } from './FileViewer.tsx';
@@ -9,6 +9,9 @@ import type { EdgePart } from './graph.ts';
 
 // The details panel's width; it floats over the canvas, which pans selected cards out from under it.
 const PANEL_W = 340;
+
+// The map screen's place: view tab, drill-down path, selected node.
+export type MapNav = { view: MapViewId; at: string[]; node: string | null };
 
 export type NodeRef = { view: MapViewId; nodeId: string; label: string };
 
@@ -29,17 +32,26 @@ export function useMap(projectId: number, view: MapViewId) {
   return { data, error, setError, reload: load };
 }
 
-export function MapView({ project, onAskInChat }: { project: Project; onAskInChat: (nodes: NodeRef[]) => void }) {
-  const [view, setView] = useState<MapViewId>('architecture');
+export function MapView({ project, onAskInChat, initial, onNav }: {
+  project: Project; onAskInChat: (nodes: NodeRef[]) => void; initial?: MapNav; onNav?: (nav: MapNav) => void;
+}) {
+  const [view, setView] = useState<MapViewId>(initial?.view ?? 'architecture');
   const { data, error, setError, reload } = useMap(project.id, view);
-  const [path, setPath] = useState<string[]>([]);
-  const [selected, setSelected] = useState<string | null>(null);
+  const [path, setPath] = useState<string[]>(initial?.at ?? []);
+  const [selected, setSelected] = useState<string | null>(initial?.node ?? null);
   const [file, setFile] = useState<string | null>(null);
   const [fileLine, setFileLine] = useState<number | undefined>();
   const openFile = (f: string | null, line?: number) => { setFile(f); setFileLine(line); };
   const [focus, setFocus] = useState<{ id: string; seq: number } | null>(null);
 
-  useEffect(() => { setPath([]); setSelected(null); }, [project.id, view]);
+  // A different view starts at its top (not on first render: the URL may have placed us deeper).
+  const firstView = useRef(true);
+  useEffect(() => {
+    if (firstView.current) { firstView.current = false; return; }
+    setPath([]); setSelected(null);
+  }, [project.id, view]);
+  // Report the place so the URL can keep it.
+  useEffect(() => { onNav?.({ view, at: path, node: selected }); }, [view, path, selected]);
   // A refreshed map can drop or rename nodes: keep the reader's place as far as it still exists.
   useEffect(() => {
     if (!data?.map) return;

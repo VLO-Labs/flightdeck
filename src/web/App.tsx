@@ -6,7 +6,8 @@ import { ErrorBoundary } from './ErrorBoundary.tsx';
 import { STACKS } from '../shared/stacks.ts';
 import { ChatView } from './ChatView.tsx';
 import { RulesView } from './RulesView.tsx';
-import { MapView, type NodeRef } from './MapView.tsx';
+import { MapView, type MapNav, type NodeRef } from './MapView.tsx';
+import { formatRoute, parseRoute, type Route } from './route.ts';
 
 type View = { kind: 'chat'; chatId: number } | { kind: 'rules' } | { kind: 'map' } | { kind: 'none' };
 
@@ -16,8 +17,13 @@ export function App() {
   const [chats, setChats] = useState<Chat[]>([]);
   const [view, setView] = useState<View>({ kind: 'none' });
   const [adding, setAdding] = useState<'existing' | 'new' | null>(null);
-  // A chat to open once the project switch below has run (a new project opens its scaffold chat).
-  const openAfterSwitch = useRef<number | null>(null);
+  // The screen to open once the project switch below has run: from the URL on load and on
+  // Back/Forward, or a new project's scaffold chat.
+  const viewAfterSwitch = useRef<View | null>(null);
+  // The map screen's own place (view tab, drill-down, selection): read from the URL, kept in it.
+  const [mapNav, setMapNav] = useState<MapNav>({ view: 'architecture', at: [], node: null });
+  const [mapNavSeq, setMapNavSeq] = useState(0); // bumps when the URL (not the map) moved the map
+  const loaded = useRef(false);
   const [error, setError] = useState('');
   // Nodes handed from the Map screen to a freshly created chat, attached to its first message.
   const [handoff, setHandoff] = useState<{ chatId: number; nodes: NodeRef[] } | null>(null);
@@ -25,8 +31,12 @@ export function App() {
   useEffect(() => {
     api.projects().then(ps => {
       setProjects(ps);
+      const route = parseRoute(location.pathname, location.search);
+      const fromUrl = ps.find(p => p.id === route.projectId)?.id;
+      if (fromUrl !== undefined) applyRoute(route);
       const saved = Number(localStorageGet('fd.project'));
-      setProjectId(ps.find(p => p.id === saved)?.id ?? ps[0]?.id);
+      setProjectId(fromUrl ?? ps.find(p => p.id === saved)?.id ?? ps[0]?.id);
+      loaded.current = true;
     }).catch(e => setError(String(e.message)));
   }, []);
 
@@ -37,11 +47,48 @@ export function App() {
 
   useEffect(() => {
     setChats([]);
-    setView(openAfterSwitch.current ? { kind: 'chat', chatId: openAfterSwitch.current } : { kind: 'none' });
-    openAfterSwitch.current = null;
+    setView(viewAfterSwitch.current ?? { kind: 'none' });
+    viewAfterSwitch.current = null;
     if (projectId !== undefined) localStorageSet('fd.project', String(projectId));
     refreshChats();
   }, [projectId, refreshChats]);
+
+  // A route's screen, for when its project is (or becomes) the current one.
+  function applyRoute(r: Route) {
+    const v: View = r.screen === 'map' ? { kind: 'map' } : r.screen === 'chat' ? { kind: 'chat', chatId: r.chatId }
+      : r.screen === 'settings' ? { kind: 'rules' } : { kind: 'none' };
+    if (r.screen === 'map') { setMapNav({ view: r.mapView, at: r.at, node: r.node }); setMapNavSeq(n => n + 1); }
+    viewAfterSwitch.current = v;
+    setView(v);
+  }
+
+  // The URL follows the screen: a new entry when the screen changes (so Back works), a silent
+  // update when only the map's place within it moves.
+  const lastScreen = useRef('');
+  useEffect(() => {
+    if (!loaded.current || projectId === undefined) return;
+    const r: Route = view.kind === 'map' ? { projectId, screen: 'map', mapView: mapNav.view, at: mapNav.at, node: mapNav.node }
+      : view.kind === 'chat' ? { projectId, screen: 'chat', chatId: view.chatId }
+      : view.kind === 'rules' ? { projectId, screen: 'settings' } : { projectId, screen: 'none' };
+    const url = formatRoute(r);
+    const screen = url.split('?')[0]!.replace(/\/map\/.*$/, '/map');
+    if (url === location.pathname + location.search) { lastScreen.current = screen; return; }
+    if (screen !== lastScreen.current && lastScreen.current !== '') history.pushState(null, '', url);
+    else history.replaceState(null, '', url);
+    lastScreen.current = screen;
+  }, [projectId, view, mapNav]);
+
+  // Back / Forward: go where the URL says.
+  useEffect(() => {
+    const onPop = () => {
+      const r = parseRoute(location.pathname, location.search);
+      if (r.projectId === undefined || !projects.some(p => p.id === r.projectId)) return;
+      applyRoute(r);
+      setProjectId(id => (id === r.projectId ? id : r.projectId));
+    };
+    window.addEventListener('popstate', onPop);
+    return () => window.removeEventListener('popstate', onPop);
+  }, [projects]);
 
   // Keep running/lock badges current without a push channel for the chat list.
   useEffect(() => {
@@ -83,7 +130,7 @@ export function App() {
               // The project exists even if the scaffold turn couldn't start; the chat can be resent.
               if (err) setError(`Project created, but the scaffold didn't start: ${err}`);
               setProjects(ps => [...ps, p]);
-              openAfterSwitch.current = chatId;
+              viewAfterSwitch.current = { kind: 'chat', chatId };
               setProjectId(p.id);
               setAdding(null);
             }}
@@ -143,8 +190,10 @@ export function App() {
         )}
         {view.kind === 'map' && project && (
           <MapView
-            key={project.id}
+            key={`${project.id}:${mapNavSeq}`}
             project={project}
+            initial={mapNav}
+            onNav={setMapNav}
             onAskInChat={async nodes => {
               try {
                 const c = await api.newChat(project.id);
