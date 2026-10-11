@@ -1,5 +1,6 @@
 #!/bin/bash
-# Installs (or updates) Flightdeck on this Mac and creates ~/Applications/Flightdeck.app.
+# Installs (or updates) Flightdeck on this Mac and creates Flightdeck.app in /Applications
+# (~/Applications if /Applications isn't writable).
 #
 #   App code   ~/Library/Application Support/Flightdeck/app   (a copy: chats that edit the Flightdeck
 #                                                             repo can't change the running server)
@@ -11,7 +12,10 @@
 set -euo pipefail
 REPO="$(cd "$(dirname "$0")/../.." && pwd)"
 HOME_DIR="$HOME/Library/Application Support/Flightdeck"
-APP_BUNDLE="$HOME/Applications/Flightdeck.app"
+APPS=/Applications; [ -w "$APPS" ] || APPS="$HOME/Applications"
+APP_BUNDLE="$APPS/Flightdeck.app"
+# An earlier install put it in ~/Applications; keep a single copy.
+[ "$APPS" = /Applications ] && rm -rf "$HOME/Applications/Flightdeck.app"
 # Not 80: macOS lets an ordinary app take port 80 only on every interface (the LAN), never on
 # loopback alone, and Flightdeck must stay loopback-only.
 PORT="${FLIGHTDECK_PORT:-8100}"
@@ -21,7 +25,7 @@ CLAUDE="$HOME/.local/bin/claude"
 [ -x "$CLAUDE" ] || { echo "Claude Code not found at $CLAUDE (install it and run 'claude' once to log in)" >&2; exit 1; }
 
 echo "→ copying the app to $HOME_DIR/app"
-mkdir -p "$HOME_DIR/app" "$HOME_DIR/data" "$HOME/Library/Logs" "$HOME/Applications"
+mkdir -p "$HOME_DIR/app" "$HOME_DIR/data" "$HOME/Library/Logs" "$APPS"
 rsync -a --delete --exclude .git --exclude .env --exclude node_modules --exclude dist --exclude data "$REPO/" "$HOME_DIR/app/"
 echo "→ installing dependencies and building"
 (cd "$HOME_DIR/app" && npm ci --no-audit --no-fund --loglevel=error && npx vite build --logLevel error)
@@ -82,4 +86,4 @@ if lsof -ti "tcp:$PORT" -sTCP:LISTEN >/dev/null 2>&1; then
   "$REPO/scripts/mac/stop.sh" >/dev/null
   open "$APP_BUNDLE"
 fi
-echo "✓ Flightdeck installed: open it from ~/Applications (or Spotlight: Flightdeck)."
+echo "✓ Flightdeck installed: $APP_BUNDLE (or Spotlight: Flightdeck)."
