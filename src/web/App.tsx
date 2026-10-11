@@ -200,7 +200,8 @@ function FolderBrowser({ onChoose }: { onChoose: (path: string) => void }) {
   if (!at) return error ? <div className="error">{error}</div> : null;
   return (
     <div className="browser">
-      <div className="browser-path" title={at.path}>{at.path}</div>
+      {/* <bdi> keeps the path left-to-right inside the right-to-left box that trims it from the left */}
+      <div className="browser-path" title={at.path}><bdi>{at.path}</bdi></div>
       {at.addable && <button type="button" className="small" onClick={() => onChoose(at.path)}>Choose this folder</button>}
       <div className="browser-list">
         {at.parent && <button type="button" className="browser-item" onClick={() => open(at.parent!)}>..</button>}
