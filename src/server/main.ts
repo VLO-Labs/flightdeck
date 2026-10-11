@@ -325,16 +325,20 @@ app.get('/api/chats/:id/feed', c => {
 app.use('/*', serveStatic({ root: './dist' }));
 app.get('/*', serveStatic({ path: './dist/index.html' }));
 
-serve({
-  hostname: config.host,
-  port: config.port,
-  // No login on loopback: this check is what keeps other web pages from driving Flightdeck.
-  fetch: req => {
-    const why = refuseLocal(req);
-    return why ? new Response(why, { status: 403 }) : app.fetch(req);
-  },
-}, info =>
+// No login on loopback: this check is what keeps other web pages from driving Flightdeck.
+const guarded = (req: Request) => {
+  const why = refuseLocal(req);
+  return why ? new Response(why, { status: 403 }) : app.fetch(req);
+};
+serve({ hostname: config.host, port: config.port, fetch: guarded }, info =>
   console.log(`flightdeck on http://${config.host}:${info.port} · data ${config.dataDir} · default model ${config.defaultModel}`));
+// A second loopback port that only exists as the target of the Mac's port-80 forwarding
+// (scripts/mac/port80.sh). macOS's pf breaks direct connections to a port it forwards to, so the
+// forwarding gets its own port and the main one (also the one the hook uses) stays untouched.
+if (config.forwardPort) {
+  serve({ hostname: config.host, port: config.forwardPort, fetch: guarded }, info =>
+    console.log(`flightdeck forwarding target on http://${config.host}:${info.port}`));
+}
 
 // The gateway listener: only requests carrying the gateway's secret, and never the hook endpoints
 // (those are for the local `claude` processes, on loopback).

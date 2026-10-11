@@ -1,29 +1,38 @@
 #!/bin/bash
-# Makes Flightdeck reachable without a port: http://flightdeck.localhost and http://flightdeck.vlolabs.
+# Gives Flightdeck a port-less address, http://flightdeck.vlolabs, without touching anything else.
 # Run once with sudo:   sudo ~/dev/vlolabs/flightdeck/scripts/mac/port80.sh        (undo: --remove)
 #
-# Flightdeck listens on 127.0.0.1:8100 only (macOS won't let an ordinary app take port 80 on loopback
-# alone). This adds a pf rule that forwards loopback port 80 to it — loopback traffic only, so
-# nothing on the network can reach it — loaded at boot by a LaunchDaemon. The rule lives under the
-# com.apple/ anchor that macOS's stock /etc/pf.conf already loads, so pf.conf isn't edited.
-# It also maps flightdeck.vlolabs to 127.0.0.1 in /etc/hosts (*.localhost needs no entry).
+#   - Flightdeck gets its own loopback address, 127.77.0.1, and flightdeck.vlolabs points at it
+#     (/etc/hosts). 127.0.0.1:80 stays free for any other local app.
+#   - A pf rule forwards 127.77.0.1:80 to 127.0.0.1:8101, a port Flightdeck opens only for this:
+#     pf breaks direct connections to the port it forwards to, so it must not be 8100, which the
+#     browser (http://flightdeck.localhost:8100) and Claude's hook use directly.
+#   - Loopback only: nothing on the network can reach it. A LaunchDaemon re-applies it at boot.
+#     The rule lives under the com.apple/ anchor the stock /etc/pf.conf already loads.
 set -euo pipefail
 [ "$(id -u)" = 0 ] || { echo "run with sudo" >&2; exit 1; }
+IP=127.77.0.1
+TARGET=8101
 ANCHOR=/etc/pf.anchors/com.vlolabs.flightdeck
 PLIST=/Library/LaunchDaemons/com.vlolabs.flightdeck-port80.plist
 NAME=com.apple/flightdeck
-HOSTS_LINE="127.0.0.1 flightdeck.vlolabs # flightdeck"
 
-if [ "${1:-}" = "--remove" ]; then
+remove() {
   launchctl bootout system "$PLIST" 2>/dev/null || true
   pfctl -a "$NAME" -F all 2>/dev/null || true
+  ifconfig lo0 -alias "$IP" 2>/dev/null || true
   rm -f "$ANCHOR" "$PLIST"
   sed -i '' '/# flightdeck$/d' /etc/hosts
-  echo "Removed: port 80 forwarding and the flightdeck.vlolabs hosts entry."
+}
+
+remove # also clears the first version, which forwarded 127.0.0.1:80 itself
+if [ "${1:-}" = "--remove" ]; then
+  dscacheutil -flushcache; killall -HUP mDNSResponder 2>/dev/null || true
+  echo "Removed: flightdeck.vlolabs, its loopback address and the port 80 forwarding."
   exit 0
 fi
 
-echo "rdr pass on lo0 inet proto tcp from any to 127.0.0.1 port 80 -> 127.0.0.1 port 8100" > "$ANCHOR"
+echo "rdr pass on lo0 inet proto tcp from any to $IP port 80 -> 127.0.0.1 port $TARGET" > "$ANCHOR"
 cat > "$PLIST" <<PL
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -31,16 +40,16 @@ cat > "$PLIST" <<PL
   <key>Label</key><string>com.vlolabs.flightdeck-port80</string>
   <key>ProgramArguments</key><array>
     <string>/bin/sh</string><string>-c</string>
-    <string>/sbin/pfctl -a $NAME -f $ANCHOR &amp;&amp; /sbin/pfctl -E</string>
+    <string>/sbin/ifconfig lo0 alias $IP up &amp;&amp; /sbin/pfctl -a $NAME -f $ANCHOR &amp;&amp; /sbin/pfctl -E</string>
   </array>
   <key>RunAtLoad</key><true/>
 </dict></plist>
 PL
 chmod 644 "$ANCHOR" "$PLIST"
-launchctl bootout system "$PLIST" 2>/dev/null || true
 launchctl bootstrap system "$PLIST"
-grep -q '# flightdeck$' /etc/hosts || echo "$HOSTS_LINE" >> /etc/hosts
+echo "$IP flightdeck.vlolabs # flightdeck" >> /etc/hosts
 dscacheutil -flushcache; killall -HUP mDNSResponder 2>/dev/null || true
 sleep 1
-pfctl -a "$NAME" -s nat 2>/dev/null | grep -q 8100 && echo "✓ port 80 → 8100 forwarding is active" || echo "! the pf rule didn't load; check: pfctl -a $NAME -s nat"
-echo "✓ http://flightdeck.localhost and http://flightdeck.vlolabs"
+ifconfig lo0 | grep -q "inet $IP " && echo "✓ $IP is up on loopback" || echo "! $IP isn't on lo0"
+pfctl -a "$NAME" -s nat 2>/dev/null | grep -q "$TARGET" && echo "✓ $IP:80 → 127.0.0.1:$TARGET" || echo "! the pf rule didn't load; check: pfctl -a $NAME -s nat"
+echo "✓ http://flightdeck.vlolabs (and http://flightdeck.localhost:8100 directly)"

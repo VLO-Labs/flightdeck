@@ -3,7 +3,7 @@
 //   Dock icon opens the browser again
 //   Quit      stops the server (asks first if Claude is working for it)
 // Settings come from the bundle's Info.plist (written by install.sh): FDNode, FDAppDir, FDData,
-// FDClaude, FDPort, FDHost, FDLog.
+// FDClaude, FDPort, FDForwardPort, FDHost, FDBareHost, FDLog.
 import AppKit
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
@@ -18,7 +18,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
   func applicationDidFinishLaunching(_ notification: Notification) {
     buildMenu()
-    if healthy("http://127.0.0.1:\(port)/health") {
+    if serverUp() {
       adoptedPid = listenerPid()
       openBrowser()
     } else {
@@ -72,6 +72,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let nodeDir = (setting("FDNode") as NSString).deletingLastPathComponent
     env["PATH"] = "\(home)/.local/bin:\(nodeDir):/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
     env["FLIGHTDECK_PORT"] = port
+    env["FLIGHTDECK_FORWARD_PORT"] = setting("FDForwardPort") // the port-80 forwarding's target
     env["FLIGHTDECK_DATA"] = setting("FDData")
     env["CLAUDE_BIN"] = setting("FDClaude")
     p.environment = env
@@ -110,7 +111,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // Open the page as soon as the server answers.
     DispatchQueue.global().async {
       for _ in 0..<75 {
-        if self.healthy("http://127.0.0.1:\(self.port)/health") {
+        if self.serverUp() {
           DispatchQueue.main.async { self.openBrowser() }
           return
         }
@@ -122,11 +123,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   // --- Helpers -----------------------------------------------------------------------------------
 
   private func openBrowser() {
-    // Without the port when scripts/mac/port80.sh has set up forwarding.
-    let bare = "http://\(host)"
+    // Without a port when scripts/mac/port80.sh has given Flightdeck its own address.
+    let bare = "http://\(setting("FDBareHost"))"
     let target = healthy("\(bare)/health") ? bare : "http://\(host):\(port)"
     if let url = URL(string: target) { NSWorkspace.shared.open(url) }
   }
+
+  private func serverUp() -> Bool { healthy("http://127.0.0.1:\(port)/health") }
 
   private func healthy(_ urlString: String) -> Bool {
     guard let url = URL(string: urlString) else { return false }

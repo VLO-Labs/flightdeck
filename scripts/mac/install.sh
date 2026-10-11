@@ -17,7 +17,8 @@ APPS=/Applications; [ -w "$APPS" ] || APPS="$HOME/Applications"
 APP_BUNDLE="$APPS/Flightdeck.app"
 LOG="$HOME/Library/Logs/Flightdeck.log"
 # Not 80: macOS lets an ordinary app take port 80 only on every interface (the LAN), never on
-# loopback alone, and Flightdeck must stay loopback-only. scripts/mac/port80.sh forwards 80 → here.
+# loopback alone, and Flightdeck must stay loopback-only. scripts/mac/port80.sh gives it a port-less
+# address instead: http://flightdeck.vlolabs (its own loopback IP, port 80 → 8101).
 PORT="${FLIGHTDECK_PORT:-8100}"
 HOST_NAME="${FLIGHTDECK_HOST_NAME:-flightdeck.localhost}" # *.localhost needs no /etc/hosts entry
 NODE="$(command -v node)" || { echo "node not found" >&2; exit 1; }
@@ -79,6 +80,8 @@ cat > "$APP_BUNDLE/Contents/Info.plist" <<PLIST
   <key>FDClaude</key><string>$CLAUDE</string>
   <key>FDPort</key><string>$PORT</string>
   <key>FDHost</key><string>$HOST_NAME</string>
+  <key>FDForwardPort</key><string>8101</string>
+  <key>FDBareHost</key><string>flightdeck.vlolabs</string>
   <key>FDLog</key><string>$LOG</string>
 </dict></plist>
 PLIST
