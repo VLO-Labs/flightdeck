@@ -6,7 +6,7 @@ import { streamSSE } from 'hono/streaming';
 import { execFileSync } from 'node:child_process';
 import { randomUUID, timingSafeEqual } from 'node:crypto';
 import { existsSync, mkdirSync, readdirSync, realpathSync, statSync } from 'node:fs';
-import { basename, isAbsolute, join, relative } from 'node:path';
+import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { and, desc, eq } from 'drizzle-orm';
 import {
   ChatSettings, CreateProject, Decision, HookPayload, MapViewId, NewProject, NewRule, ProjectSettings, SendMessage,
@@ -61,6 +61,7 @@ app.post('/api/projects', async c => {
   const body = NewProject.safeParse(await c.req.json());
   if (!body.success) return c.json({ error: 'name and path are required' }, 400);
   const { path } = body.data;
+  if (isAbsolute(path) && !underBrowseRoot(path)) return c.json({ error: outsideRoot() }, 400);
   if (!isAbsolute(path) || !existsSync(path) || !statSync(path).isDirectory())
     return c.json({ error: `${path} doesn't exist on the box. Use "New project" to create one.` }, 400);
   if (!existsSync(`${path}/.git`)) return c.json({ error: `${path} is not a git repository` }, 400);
@@ -70,12 +71,28 @@ app.post('/api/projects', async c => {
   return c.json(toProject(insertProject(body.data.name || basename(path), path)));
 });
 
+// Projects live under config.browseRoot (the box's ~/dev). True when `path` is there once symlinks
+// are resolved; a folder that doesn't exist yet is judged by its nearest existing parent.
+const isInside = (realRoot: string, real: string) => real === realRoot || real.startsWith(realRoot + '/');
+function underBrowseRoot(path: string): boolean {
+  let realRoot: string;
+  try { realRoot = realpathSync(config.browseRoot); } catch { return false; }
+  let existing = resolve(path);
+  let rest = '';
+  while (!existsSync(existing)) {
+    rest = join(basename(existing), rest);
+    existing = dirname(existing);
+  }
+  return isInside(realRoot, join(realpathSync(existing), rest).replace(/\/$/, ''));
+}
+const outsideRoot = () => `projects must be under ${config.browseRoot}`;
+
 // Folder browser for "Add existing", confined to config.browseRoot. Paths are checked after
 // resolving symlinks (~/dev itself is one), and shown in browse-root terms.
 app.get('/api/browse', c => {
   let realRoot: string;
   try { realRoot = realpathSync(config.browseRoot); } catch { return c.json({ error: `${config.browseRoot} doesn't exist` }, 500); }
-  const inside = (real: string) => real === realRoot || real.startsWith(realRoot + '/');
+  const inside = (real: string) => isInside(realRoot, real);
   const asked = c.req.query('path') || config.browseRoot;
   let real: string;
   try { real = realpathSync(asked); } catch { return c.json({ error: `${asked} doesn't exist` }, 404); }
@@ -106,6 +123,7 @@ app.post('/api/projects/new', async c => {
   if (!body.success) return c.json({ error: 'name, folder and stack are required' }, 400);
   const { name, path, stack, description } = body.data;
   if (!isAbsolute(path)) return c.json({ error: 'the folder must be an absolute path' }, 400);
+  if (!underBrowseRoot(path)) return c.json({ error: outsideRoot() }, 400);
   if (existsSync(path)) return c.json({ error: `${path} already exists. Use "Add project" for an existing repository.` }, 400);
   const err = initRepo(path);
   if (err) return c.json({ error: err }, 400);
