@@ -11,10 +11,18 @@ Claude subscription** — never API tokens.
 `VLO-Labs/flightdeck`.
 
 ## Run it
-On the box (Node 22): `npm ci && npx vite build && FLIGHTDECK_DATA=/data/flightdeck npm start`
-→ `127.0.0.1:8100`, loopback only. From the Mac: `ssh -L 8100:127.0.0.1:8100 vlolabs@vlolabsdev`,
-then open http://localhost:8100. No systemd unit, tunnel route or SSO yet — a dev instance dies
-with the box. Tests: `npm test`.
+**Production:** `https://flightdeck.vlolabsdev.com` — behind the shared SSO gateway (same login
+as data/tools/videocut). A native systemd service on the box (`flightdeck.service`), deployed
+from this repo with `make flightdeck` in `vlolabsdev-local` (copies the source to
+`/opt/vlolabs/flightdeck`, `npm ci`, builds, restarts). Data: `/data/flightdeck`. Logs:
+`journalctl -u flightdeck -f`. Restarting ends any chat turn in flight.
+
+Listeners on :8100: `127.0.0.1` (the Claude Code hook + SSH tunnels:
+`ssh -L 8100:127.0.0.1:8100 vlolabs@vlolabsdev`) and `172.17.0.1` for the gateway, which
+refuses anything without the gateway's `X-Flightdeck-Gateway` secret and never serves `/hook`.
+
+**Dev:** `npm ci && npx vite build && FLIGHTDECK_DATA=./data npm start` (pick another port with
+`FLIGHTDECK_PORT` if the service is running). Tests: `npm test`.
 
 | Read | For |
 |------|-----|
@@ -46,3 +54,7 @@ with the box. Tests: `npm test`.
   a browser found and fixed: double-click zoomed instead of opening a node, a double-click also
   toggled context twice, the canvas fitted to the previous level, and a crowded chat header.
   **Phase 1 is complete.**
+- **2026-10-11** — Permanent: systemd service, tunnel route and SSO via the shared gateway
+  (`flightdeck.vlolabsdev.com`). The gateway reaches the native listener over docker0 with a
+  secret header; UFW needed an allow from the docker subnets (Docker-published services never
+  hit UFW, a native one does).
