@@ -1,8 +1,8 @@
 {
   "version": 1,
   "view": "architecture",
-  "generatedAt": "2026-10-10T23:35:00.345Z",
-  "commit": "7e85b4c4eff98535a02bdaf9d1375ecb88663fd5",
+  "generatedAt": "2026-10-11T01:47:42.958Z",
+  "commit": "ee279be04322e80929c503af4beffd13173015ac",
   "model": "claude-opus-5-5",
   "warnings": [],
   "nodes": [
@@ -11,7 +11,7 @@
       "parent": null,
       "label": "Web UI",
       "kind": "ui",
-      "summary": "React single-page app (built by Vite) where the user picks a project, chats with Claude Code, approves tool calls, edits rules and navigates code maps.",
+      "summary": "React single-page app where the user picks a project, chats with Claude Code, approves tool calls and navigates the project maps.",
       "files": [
         "src/web/",
         "vite.config.ts"
@@ -23,7 +23,7 @@
       "parent": "web-ui",
       "label": "App Shell",
       "kind": "ui",
-      "summary": "Sidebar with project picker, add-project form, chat list and navigation between map, chat and settings views.",
+      "summary": "Sidebar with project picker, add-project form and chat list, routing the main pane between map, chat and settings.",
       "files": [
         "src/web/App.tsx",
         "src/web/main.tsx",
@@ -37,7 +37,7 @@
       "parent": "web-ui",
       "label": "Chat View",
       "kind": "ui",
-      "summary": "Shows one chat's replayed and live feed, approval cards, Discuss/Build mode and model choice, and the message composer.",
+      "summary": "One chat: replays and streams the feed, renders approval cards and the composer, and shows a map pane lit by the agent's reads and edits.",
       "files": [
         "src/web/ChatView.tsx"
       ],
@@ -46,16 +46,27 @@
     {
       "id": "map-view",
       "parent": "web-ui",
-      "label": "Map View",
+      "label": "Map Screen",
       "kind": "ui",
-      "summary": "Renders a project's generated diagrams with React Flow and ELK layout, with drill-down, stale-node highlighting and generation controls.",
+      "summary": "Loads a project's diagram views, polls while generating, shows stale nodes and hands nodes off to a new chat.",
       "files": [
         "src/web/MapView.tsx"
       ],
       "fields": []
     },
     {
-      "id": "file-viewer",
+      "id": "map-canvas",
+      "parent": "web-ui",
+      "label": "Map Canvas",
+      "kind": "ui",
+      "summary": "Draws map nodes and edges with React Flow and ELK layout, with drill-down breadcrumbs and heat highlighting.",
+      "files": [
+        "src/web/MapCanvas.tsx"
+      ],
+      "fields": []
+    },
+    {
+      "id": "file-viewer-ui",
       "parent": "web-ui",
       "label": "File Viewer",
       "kind": "ui",
@@ -70,7 +81,7 @@
       "parent": "web-ui",
       "label": "Project Settings",
       "kind": "ui",
-      "summary": "Edits a project's allow/ask/deny approval rules and its default Discuss/Build models.",
+      "summary": "Edits a project's per-mode models and its allow/ask/deny approval rules.",
       "files": [
         "src/web/RulesView.tsx"
       ],
@@ -81,7 +92,7 @@
       "parent": "web-ui",
       "label": "API Client",
       "kind": "module",
-      "summary": "Thin typed fetch wrapper for the Flightdeck API that validates responses against the shared contracts.",
+      "summary": "Thin typed fetch wrapper for the Flightdeck REST API, parsing responses with the shared contracts.",
       "files": [
         "src/web/api.ts"
       ],
@@ -92,7 +103,7 @@
       "parent": null,
       "label": "Flightdeck Server",
       "kind": "service",
-      "summary": "Loopback-only Hono server that serves the UI and API, runs Claude Code turns and map generations, and answers Claude Code's PreToolUse hook.",
+      "summary": "Node/Hono server that serves the UI and API, streams chat feeds over SSE, runs claude processes and answers their PreToolUse hooks.",
       "files": [
         "src/server/"
       ],
@@ -101,33 +112,44 @@
     {
       "id": "http-api",
       "parent": "server",
-      "label": "HTTP API",
+      "label": "HTTP API & Listeners",
       "kind": "module",
-      "summary": "Hono routes for projects, chats, rules, approvals, maps and files, the SSE chat feed, the two hook endpoints and static serving of the built UI.",
+      "summary": "Hono routes for projects, chats, rules, maps, files, approvals and the SSE feed, plus the loopback listener and the secret-checked gateway listener.",
       "files": [
         "src/server/main.ts"
       ],
       "fields": []
     },
     {
-      "id": "runner",
+      "id": "hook-handler",
+      "parent": "server",
+      "label": "Approval Hook",
+      "kind": "module",
+      "summary": "Decides each tool call Claude Code asks about: Discuss-mode refusal, per-project edit lock, project rules, else a held approval card with timeout.",
+      "files": [
+        "src/server/hook.ts"
+      ],
+      "fields": []
+    },
+    {
+      "id": "chat-runner",
       "parent": "server",
       "label": "Chat Runner",
       "kind": "module",
-      "summary": "Runs each chat turn as a headless `claude -p` process with the hook settings, tracks the run, enforces the subscription tripwire and supports stop.",
+      "summary": "Runs one chat turn as a headless `claude -p` process with hook settings, enforces the subscription tripwire and records the run.",
       "files": [
         "src/server/runner.ts"
       ],
       "fields": []
     },
     {
-      "id": "hook-gate",
+      "id": "map-generator",
       "parent": "server",
-      "label": "Approval Hook",
+      "label": "Map Generator",
       "kind": "module",
-      "summary": "Decides every tool call of a chat run: Discuss-mode refusal, per-project edit lock, project rules, then a held approval card the user clicks.",
+      "summary": "Spawns a read-only claude agent with a JSON schema to produce a map, validates it, writes it to .flightdeck/ and computes stale nodes from git diffs.",
       "files": [
-        "src/server/hook.ts"
+        "src/server/maps.ts"
       ],
       "fields": []
     },
@@ -136,42 +158,29 @@
       "parent": "server",
       "label": "Rules Engine",
       "kind": "module",
-      "summary": "Matches tool calls against Claude Code-style allow/ask/deny patterns and suggests patterns for \"always allow\".",
+      "summary": "Matches tool calls against Claude-Code-style allow/ask/deny patterns with Deny > Ask > Allow precedence and suggests patterns for cards.",
       "files": [
-        "src/server/rules.ts",
-        "src/server/rules.test.ts"
+        "src/server/rules.ts"
       ],
       "fields": []
     },
     {
-      "id": "map-gen",
-      "parent": "server",
-      "label": "Map Generator",
-      "kind": "module",
-      "summary": "Spawns a read-only Claude Code agent that returns a map as structured output, validates it, stores it and computes which nodes changed since its commit.",
-      "files": [
-        "src/server/maps.ts",
-        "src/server/maps.test.ts"
-      ],
-      "fields": []
-    },
-    {
-      "id": "feed",
+      "id": "feed-module",
       "parent": "server",
       "label": "Chat Feed",
       "kind": "module",
-      "summary": "Append-only per-chat event log with replay and in-memory live subscribers for SSE.",
+      "summary": "Appends feed items to a chat's JSONL file and fans them out to live SSE subscribers; replays the file on connect.",
       "files": [
         "src/server/feed.ts"
       ],
       "fields": []
     },
     {
-      "id": "file-access",
+      "id": "file-service",
       "parent": "server",
-      "label": "File Access",
+      "label": "File Service",
       "kind": "module",
-      "summary": "Read-only file and directory listing confined to the project folder, never exposing .git.",
+      "summary": "Reads a project file or lists a directory for the viewer, confined to the project and never exposing .git.",
       "files": [
         "src/server/files.ts"
       ],
@@ -180,9 +189,9 @@
     {
       "id": "db-module",
       "parent": "server",
-      "label": "DB Schema",
+      "label": "DB Access",
       "kind": "module",
-      "summary": "Drizzle table definitions plus boot-time DDL, column migrations and cleanup of runs and approvals left open by a restart.",
+      "summary": "Drizzle schema and boot-time DDL/upgrades for the SQLite database, closing out runs and approvals left open by a restart.",
       "files": [
         "src/server/db.ts"
       ],
@@ -193,66 +202,53 @@
       "parent": "server",
       "label": "Config",
       "kind": "module",
-      "summary": "Environment-driven settings: loopback host and port, data dir, claude binary path, default model and approval timeout.",
+      "summary": "Environment-driven settings: port, data dir, claude binary, default model, approval timeout, gateway host and secret.",
       "files": [
         "src/server/config.ts"
       ],
       "fields": []
     },
     {
-      "id": "contracts",
+      "id": "shared-contracts",
       "parent": null,
       "label": "Shared Contracts",
       "kind": "library",
-      "summary": "Zod schemas and types shared by server and UI for API payloads, feed items, Claude stream events, hook payloads and maps.",
+      "summary": "Zod schemas and types shared by server and UI for API bodies, feed items, Claude stream events and maps.",
       "files": [
         "src/shared/contracts.ts"
       ],
       "fields": []
     },
     {
-      "id": "sqlite",
+      "id": "sqlite-db",
       "parent": null,
       "label": "SQLite Database",
       "kind": "datastore",
-      "summary": "flightdeck.db in the data dir (WAL) holding projects, rules, chats, runs and the approvals audit trail.",
+      "summary": "flightdeck.db (WAL) holding projects, rules, chats, runs and the approvals audit trail.",
       "files": [
         "src/server/db.ts"
       ],
       "fields": []
     },
     {
-      "id": "chat-feeds",
+      "id": "chat-jsonl",
       "parent": null,
       "label": "Chat Feed Files",
       "kind": "datastore",
-      "summary": "One JSONL file per chat under the data dir that holds the chat's full event history for replay.",
+      "summary": "Per-chat append-only JSONL files under the data dir that hold each chat's full feed for replay.",
       "files": [
         "src/server/feed.ts"
       ],
       "fields": []
     },
     {
-      "id": "stored-maps",
+      "id": "map-files",
       "parent": null,
-      "label": "Stored Maps",
+      "label": "Map Files",
       "kind": "datastore",
-      "summary": "Validated map JSON written to `.flightdeck/<view>.json` inside each project repo, tagged with the commit it was made from.",
+      "summary": "Generated maps stored as .flightdeck/<view>.json inside each project repo, with the commit they were made from.",
       "files": [
-        "src/server/maps.ts"
-      ],
-      "fields": []
-    },
-    {
-      "id": "project-repos",
-      "parent": null,
-      "label": "Project Repositories",
-      "kind": "datastore",
-      "summary": "The git repositories on the box that Flightdeck manages; inspected with git for HEAD, file lists and diffs, and read for the file viewer.",
-      "files": [
-        "src/server/maps.ts",
-        "src/server/runner.ts",
-        "src/server/files.ts"
+        ".flightdeck/"
       ],
       "fields": []
     },
@@ -261,10 +257,35 @@
       "parent": null,
       "label": "Claude Code CLI",
       "kind": "external",
-      "summary": "The unmodified `claude` binary run headless on the subscription, both for chat turns and for map generation, calling back into Flightdeck's hook before every tool use.",
+      "summary": "The unmodified `claude` CLI on the subscription, spawned headless for chat turns and map generation and calling back via HTTP hooks.",
       "files": [
         "src/server/runner.ts",
         "src/server/maps.ts"
+      ],
+      "fields": []
+    },
+    {
+      "id": "git",
+      "parent": null,
+      "label": "Git / Project Repos",
+      "kind": "external",
+      "summary": "The project git repositories on the box, queried for HEAD, tracked files and diffs since a map's commit.",
+      "files": [
+        "src/server/maps.ts",
+        "src/server/runner.ts",
+        "src/server/files.ts"
+      ],
+      "fields": []
+    },
+    {
+      "id": "sso-gateway",
+      "parent": null,
+      "label": "SSO Gateway",
+      "kind": "external",
+      "summary": "Shared nginx SSO gateway that reaches the server over docker0 and must send the X-Flightdeck-Gateway secret header.",
+      "files": [
+        "src/server/main.ts",
+        "src/server/config.ts"
       ],
       "fields": []
     }
@@ -272,33 +293,63 @@
   "edges": [
     {
       "from": "app-shell",
+      "to": "chat-view",
+      "label": "opens chat"
+    },
+    {
+      "from": "app-shell",
+      "to": "map-view",
+      "label": "opens map"
+    },
+    {
+      "from": "app-shell",
+      "to": "rules-view",
+      "label": "opens settings"
+    },
+    {
+      "from": "map-view",
+      "to": "map-canvas",
+      "label": "renders nodes/edges"
+    },
+    {
+      "from": "chat-view",
+      "to": "map-canvas",
+      "label": "map pane with heat"
+    },
+    {
+      "from": "map-view",
+      "to": "file-viewer-ui",
+      "label": "opens node files"
+    },
+    {
+      "from": "map-view",
+      "to": "app-shell",
+      "label": "nodes for new chat"
+    },
+    {
+      "from": "app-shell",
       "to": "api-client",
-      "label": "projects, chats, newChat, addProject"
+      "label": "projects, chats"
     },
     {
       "from": "chat-view",
       "to": "api-client",
-      "label": "send, stop, decide, chatSettings"
+      "label": "send, stop, decide, settings"
     },
     {
       "from": "map-view",
       "to": "api-client",
-      "label": "map, generateMap, stopMap"
+      "label": "get/generate/stop map"
     },
     {
-      "from": "file-viewer",
+      "from": "file-viewer-ui",
       "to": "api-client",
-      "label": "file"
+      "label": "GET file"
     },
     {
       "from": "rules-view",
       "to": "api-client",
-      "label": "rules, addRule, projectSettings"
-    },
-    {
-      "from": "map-view",
-      "to": "file-viewer",
-      "label": "opens node files"
+      "label": "rules, project settings"
     },
     {
       "from": "api-client",
@@ -311,139 +362,139 @@
       "label": "SSE /api/chats/:id/feed"
     },
     {
-      "from": "http-api",
-      "to": "runner",
-      "label": "startTurn / stopTurn"
+      "from": "sso-gateway",
+      "to": "http-api",
+      "label": "proxied HTTP with secret header"
     },
     {
       "from": "http-api",
-      "to": "hook-gate",
-      "label": "decide, resolveApproval"
+      "to": "chat-runner",
+      "label": "start/stop turn"
     },
     {
       "from": "http-api",
-      "to": "map-gen",
-      "label": "startGeneration, readMap, changedSince, generatorDecision"
+      "to": "hook-handler",
+      "label": "POST /hook, approval decisions"
     },
     {
       "from": "http-api",
-      "to": "file-access",
-      "label": "viewFile"
+      "to": "map-generator",
+      "label": "generate/stop, read map, /hook/map"
     },
     {
       "from": "http-api",
-      "to": "feed",
+      "to": "file-service",
+      "label": "view file"
+    },
+    {
+      "from": "http-api",
+      "to": "feed-module",
       "label": "replay + subscribe"
     },
     {
       "from": "http-api",
-      "to": "sqlite",
+      "to": "sqlite-db",
       "label": "reads/writes projects, chats, rules"
     },
     {
-      "from": "runner",
+      "from": "chat-runner",
       "to": "claude-cli",
-      "label": "spawns claude -p --resume (stream-json)"
-    },
-    {
-      "from": "map-gen",
-      "to": "claude-cli",
-      "label": "spawns claude -p --json-schema"
+      "label": "spawns claude -p stream-json"
     },
     {
       "from": "claude-cli",
       "to": "http-api",
-      "label": "PreToolUse hook POST /hook, /hook/map"
+      "label": "PreToolUse HTTP hook"
     },
     {
-      "from": "claude-cli",
-      "to": "project-repos",
-      "label": "reads and edits code"
+      "from": "chat-runner",
+      "to": "feed-module",
+      "label": "appends user/claude/run items"
     },
     {
-      "from": "runner",
-      "to": "feed",
-      "label": "appends user, run, claude events"
-    },
-    {
-      "from": "hook-gate",
-      "to": "feed",
-      "label": "appends approval cards"
-    },
-    {
-      "from": "hook-gate",
-      "to": "runner",
-      "label": "activeRunForSession"
-    },
-    {
-      "from": "runner",
-      "to": "hook-gate",
-      "label": "releases edit lock, cancels pending cards"
-    },
-    {
-      "from": "hook-gate",
-      "to": "rules-engine",
-      "label": "evaluate, suggestPattern"
-    },
-    {
-      "from": "map-gen",
-      "to": "rules-engine",
-      "label": "evaluate generator rules"
-    },
-    {
-      "from": "runner",
-      "to": "sqlite",
+      "from": "chat-runner",
+      "to": "sqlite-db",
       "label": "writes runs, chats"
     },
     {
-      "from": "hook-gate",
-      "to": "sqlite",
+      "from": "chat-runner",
+      "to": "hook-handler",
+      "label": "releases lock, cancels pending"
+    },
+    {
+      "from": "chat-runner",
+      "to": "git",
+      "label": "rev-parse HEAD"
+    },
+    {
+      "from": "hook-handler",
+      "to": "chat-runner",
+      "label": "active run for session"
+    },
+    {
+      "from": "hook-handler",
+      "to": "rules-engine",
+      "label": "evaluate tool call"
+    },
+    {
+      "from": "hook-handler",
+      "to": "feed-module",
+      "label": "appends approval cards"
+    },
+    {
+      "from": "hook-handler",
+      "to": "sqlite-db",
       "label": "writes approvals, reads/writes rules"
     },
     {
-      "from": "db-module",
-      "to": "sqlite",
-      "label": "DDL, migrations, restart cleanup"
+      "from": "map-generator",
+      "to": "claude-cli",
+      "label": "spawns read-only mapping agent"
     },
     {
-      "from": "feed",
-      "to": "chat-feeds",
+      "from": "map-generator",
+      "to": "rules-engine",
+      "label": "generator read-only policy"
+    },
+    {
+      "from": "map-generator",
+      "to": "map-files",
+      "label": "writes/reads <view>.json"
+    },
+    {
+      "from": "map-generator",
+      "to": "git",
+      "label": "ls-files, diff since commit"
+    },
+    {
+      "from": "file-service",
+      "to": "git",
+      "label": "lists repo files"
+    },
+    {
+      "from": "feed-module",
+      "to": "chat-jsonl",
       "label": "appends/reads JSONL"
     },
     {
-      "from": "map-gen",
-      "to": "stored-maps",
-      "label": "writes/reads .flightdeck/<view>.json"
+      "from": "db-module",
+      "to": "sqlite-db",
+      "label": "schema DDL, migrations"
     },
     {
-      "from": "map-gen",
-      "to": "project-repos",
-      "label": "git ls-files, rev-parse, diff"
+      "from": "http-api",
+      "to": "shared-contracts",
+      "label": "validates bodies"
     },
     {
-      "from": "runner",
-      "to": "project-repos",
-      "label": "git rev-parse HEAD"
-    },
-    {
-      "from": "file-access",
-      "to": "project-repos",
-      "label": "reads files"
-    },
-    {
-      "from": "file-access",
-      "to": "map-gen",
-      "label": "repoFiles"
-    },
-    {
-      "from": "web-ui",
-      "to": "contracts",
+      "from": "api-client",
+      "to": "shared-contracts",
       "label": "parses responses"
     },
     {
-      "from": "server",
-      "to": "contracts",
-      "label": "validates payloads and events"
+      "from": "chat-runner",
+      "to": "config",
+      "label": "claude bin, port, timeout"
     }
   ]
 }

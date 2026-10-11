@@ -1,20 +1,19 @@
 {
   "version": 1,
   "view": "data-model",
-  "generatedAt": "2026-10-10T23:35:47.414Z",
-  "commit": "7e85b4c4eff98535a02bdaf9d1375ecb88663fd5",
+  "generatedAt": "2026-10-11T01:48:20.171Z",
+  "commit": "ee279be04322e80929c503af4beffd13173015ac",
   "model": "claude-opus-5-5",
   "warnings": [],
   "nodes": [
     {
       "id": "projects",
       "parent": null,
-      "label": "projects",
+      "label": "Projects",
       "kind": "table",
-      "summary": "SQLite table of registered repositories, each with its default Discuss and Build models.",
+      "summary": "A registered repository Flightdeck manages, with its default models for Discuss and Build turns.",
       "files": [
-        "src/server/db.ts",
-        "src/shared/contracts.ts"
+        "src/server/db.ts"
       ],
       "fields": [
         {
@@ -47,9 +46,9 @@
     {
       "id": "rules",
       "parent": null,
-      "label": "rules",
+      "label": "Approval Rules",
       "kind": "table",
-      "summary": "SQLite table of per-project approval rules that auto-allow, ask or deny tool calls by pattern.",
+      "summary": "Per-project allow/ask/deny patterns that decide tool calls automatically.",
       "files": [
         "src/server/db.ts",
         "src/server/rules.ts"
@@ -58,7 +57,7 @@
         {
           "name": "id",
           "type": "integer",
-          "note": "PK, autoincrement"
+          "note": "PK"
         },
         {
           "name": "project_id",
@@ -85,18 +84,17 @@
     {
       "id": "chats",
       "parent": null,
-      "label": "chats",
+      "label": "Chats",
       "kind": "table",
-      "summary": "SQLite table of chats in a project, each bound to one Claude Code session, with its mode and optional model overrides.",
+      "summary": "A conversation with Claude Code on a project, tied to one CLI session and a Discuss/Build mode.",
       "files": [
-        "src/server/db.ts",
-        "src/shared/contracts.ts"
+        "src/server/db.ts"
       ],
       "fields": [
         {
           "name": "id",
           "type": "integer",
-          "note": "PK, autoincrement"
+          "note": "PK"
         },
         {
           "name": "project_id",
@@ -111,11 +109,11 @@
         {
           "name": "session_id",
           "type": "text",
-          "note": "unique; Claude Code session id"
+          "note": "unique; Claude Code session"
         },
         {
           "name": "started",
-          "type": "integer (boolean)",
+          "type": "boolean",
           "note": "first turn sent?"
         },
         {
@@ -126,21 +124,21 @@
         {
           "name": "discuss_model",
           "type": "text",
-          "note": "nullable; null = project default"
+          "note": "nullable override; null = project default"
         },
         {
           "name": "build_model",
           "type": "text",
-          "note": "nullable; null = project default"
+          "note": "nullable override; null = project default"
         }
       ]
     },
     {
       "id": "runs",
       "parent": null,
-      "label": "runs",
+      "label": "Runs",
       "kind": "table",
-      "summary": "SQLite table recording each turn a chat ran, with its outcome and git HEAD before and after.",
+      "summary": "One Claude Code turn executed for a chat, with its outcome and the git HEAD before and after.",
       "files": [
         "src/server/db.ts",
         "src/server/runner.ts"
@@ -149,7 +147,7 @@
         {
           "name": "id",
           "type": "integer",
-          "note": "PK, autoincrement"
+          "note": "PK"
         },
         {
           "name": "chat_id",
@@ -169,26 +167,21 @@
         {
           "name": "head_before",
           "type": "text",
-          "note": "git HEAD at start"
+          "note": "git commit before the run"
         },
         {
           "name": "head_after",
           "type": "text",
-          "note": "git HEAD at end"
-        },
-        {
-          "name": "ended_at",
-          "type": "text",
-          "note": "nullable"
+          "note": "git commit after the run"
         }
       ]
     },
     {
       "id": "approvals",
       "parent": null,
-      "label": "approvals",
+      "label": "Approvals",
       "kind": "table",
-      "summary": "SQLite audit trail of every tool call the hook decided during a run, and who or what decided it.",
+      "summary": "Audit trail of every tool call the hook decided during a run, and who or what decided it.",
       "files": [
         "src/server/db.ts",
         "src/server/hook.ts"
@@ -197,7 +190,7 @@
         {
           "name": "id",
           "type": "integer",
-          "note": "PK, autoincrement"
+          "note": "PK"
         },
         {
           "name": "run_id",
@@ -217,7 +210,7 @@
         {
           "name": "decision",
           "type": "text",
-          "note": "enum pending | allowed | denied; pending denied on boot"
+          "note": "enum pending | allowed | denied"
         },
         {
           "name": "decided_by",
@@ -227,15 +220,10 @@
         {
           "name": "rule",
           "type": "text",
-          "note": "matching rule pattern, nullable"
+          "note": "matching rule pattern, if any"
         },
         {
           "name": "reason",
-          "type": "text",
-          "note": "nullable"
-        },
-        {
-          "name": "decided_at",
           "type": "text",
           "note": "nullable"
         }
@@ -244,9 +232,9 @@
     {
       "id": "chat-feed",
       "parent": null,
-      "label": "Chat feed log",
+      "label": "Chat Feed Log",
       "kind": "table",
-      "summary": "Append-only JSONL file per chat (chats/<chatId>.jsonl in the data dir) holding every feed item, replayed on reconnect.",
+      "summary": "Append-only JSONL file per chat (data/chats/<chatId>.jsonl) holding every feed item, replayed on reconnect.",
       "files": [
         "src/server/feed.ts",
         "src/shared/contracts.ts"
@@ -260,54 +248,45 @@
         {
           "name": "at",
           "type": "string",
-          "note": "ISO time"
+          "note": "ISO timestamp"
         },
         {
           "name": "runId",
           "type": "number",
-          "note": "-> runs.id"
-        },
-        {
-          "name": "text / mode / model",
-          "type": "string",
-          "note": "user items"
-        },
-        {
-          "name": "event",
-          "type": "object",
-          "note": "claude items: raw stream-json event"
-        },
-        {
-          "name": "status",
-          "type": "enum",
-          "note": "run items: started | finished | failed | stopped"
+          "note": "FK -> runs.id"
         },
         {
           "name": "approvalId",
           "type": "number",
-          "note": "approval items: -> approvals.id"
+          "note": "approval items: FK -> approvals.id"
         },
         {
-          "name": "state / decidedBy",
-          "type": "enum",
-          "note": "approval items"
+          "name": "event",
+          "type": "json",
+          "note": "claude items: raw stream-json event"
+        },
+        {
+          "name": "text",
+          "type": "string",
+          "note": "user items: message text, plus mode/model/context"
         }
       ]
     },
     {
       "id": "stored-map",
       "parent": null,
-      "label": "Stored map",
+      "label": "Stored Maps",
       "kind": "table",
-      "summary": "JSON file per view written into the mapped repo at .flightdeck/<view>.json, holding a generated diagram and the commit it was made from.",
+      "summary": "A generated diagram for one view, written into the target repo as .flightdeck/<view>.json.",
       "files": [
         "src/server/maps.ts",
-        "src/shared/contracts.ts"
+        "src/shared/contracts.ts",
+        ".flightdeck/"
       ],
       "fields": [
         {
           "name": "view",
-          "type": "enum",
+          "type": "text",
           "note": "architecture | data-model | flows; one file per view"
         },
         {
@@ -318,17 +297,12 @@
         {
           "name": "commit",
           "type": "string",
-          "note": "nullable; HEAD at generation, base for change detection"
+          "note": "nullable; HEAD when generated, base for change detection"
         },
         {
           "name": "model",
           "type": "string",
           "note": "model that generated it"
-        },
-        {
-          "name": "warnings",
-          "type": "string[]",
-          "note": "validation warnings"
         },
         {
           "name": "nodes",
@@ -339,6 +313,11 @@
           "name": "edges",
           "type": "MapEdge[]",
           "note": "from, to, label"
+        },
+        {
+          "name": "warnings",
+          "type": "string[]",
+          "note": "dropped paths/edges from validation"
         }
       ]
     }
@@ -382,7 +361,7 @@
     {
       "from": "stored-map",
       "to": "projects",
-      "label": "N:1 written into project path"
+      "label": "N:1 stored in project path"
     }
   ]
 }
