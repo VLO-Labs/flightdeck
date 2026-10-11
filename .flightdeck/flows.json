@@ -1,8 +1,8 @@
 {
   "version": 1,
   "view": "flows",
-  "generatedAt": "2026-10-11T02:33:02.602Z",
-  "commit": "7725a228761212162654c5d677599a4fce75546d",
+  "generatedAt": "2026-10-11T06:46:55.301Z",
+  "commit": "9c675b9a5e2fa9dfc20c0cf5815e53d1ef23147c",
   "model": "claude-opus-5-5",
   "warnings": [],
   "nodes": [
@@ -11,7 +11,7 @@
       "parent": null,
       "label": "Chat turn",
       "kind": "flow",
-      "summary": "The user sends a message in a chat and Flightdeck runs one headless `claude -p` turn, streaming its events back into the chat live.",
+      "summary": "A message typed in a chat runs one headless `claude -p` turn whose events stream back live into the chat feed.",
       "files": [
         "src/web/ChatView.tsx"
       ],
@@ -20,7 +20,7 @@
     {
       "id": "ct-compose",
       "parent": "chat-turn",
-      "label": "Compose message",
+      "label": "Compose and send",
       "kind": "step",
       "summary": "The composer sends the text plus any attached map-node references to the server.",
       "files": [
@@ -30,14 +30,13 @@
       "fields": []
     },
     {
-      "id": "ct-resolve",
+      "id": "ct-messages-route",
       "parent": "chat-turn",
-      "label": "Resolve node context",
+      "label": "Resolve message context",
       "kind": "step",
-      "summary": "The messages endpoint sets the chat title and resolves attached nodes from the map files on disk, so the UI can only point at nodes and never inject text.",
+      "summary": "POST /api/chats/:id/messages titles a new chat and resolves attached node refs against the map files on disk.",
       "files": [
-        "src/server/main.ts",
-        "src/server/maps.ts"
+        "src/server/main.ts"
       ],
       "fields": []
     },
@@ -46,19 +45,18 @@
       "parent": "chat-turn",
       "label": "Spawn claude -p",
       "kind": "step",
-      "summary": "startTurn records a run and spawns the CLI with the session id, the mode's model, the Discuss prompt, the hook settings and no API key in the environment.",
+      "summary": "startTurn records a run, builds the context block, and spawns the CLI with the Flightdeck hook, the chat's mode/model, and no API key in its environment.",
       "files": [
-        "src/server/runner.ts",
-        "src/server/db.ts"
+        "src/server/runner.ts"
       ],
       "fields": []
     },
     {
-      "id": "ct-stream",
+      "id": "ct-parse-stream",
       "parent": "chat-turn",
-      "label": "Parse stream-json",
+      "label": "Parse event stream",
       "kind": "step",
-      "summary": "Each stdout line is parsed as a Claude event; a non-subscription apiKeySource aborts the run, and everything else is appended to the chat feed.",
+      "summary": "Each stream-json line is validated; a non-subscription session is killed by the tripwire, everything else is appended to the feed.",
       "files": [
         "src/server/runner.ts",
         "src/shared/contracts.ts"
@@ -66,11 +64,11 @@
       "fields": []
     },
     {
-      "id": "ct-feed",
+      "id": "ct-feed-store",
       "parent": "chat-turn",
       "label": "Append to feed",
       "kind": "step",
-      "summary": "Feed items go to an append-only JSONL file per chat and out to live subscribers.",
+      "summary": "Feed items go to the chat's append-only JSONL file and to every live subscriber.",
       "files": [
         "src/server/feed.ts"
       ],
@@ -79,9 +77,9 @@
     {
       "id": "ct-sse",
       "parent": "chat-turn",
-      "label": "SSE feed stream",
+      "label": "Stream feed (SSE)",
       "kind": "step",
-      "summary": "The feed endpoint replays the whole JSONL file, sends a 'replayed' marker, then streams live items with keep-alive pings and no nginx buffering.",
+      "summary": "GET /api/chats/:id/feed replays the whole JSONL, marks 'replayed', then pushes live items with keep-alive pings.",
       "files": [
         "src/server/main.ts"
       ],
@@ -90,23 +88,12 @@
     {
       "id": "ct-render",
       "parent": "chat-turn",
-      "label": "Derive and render",
+      "label": "Render feed",
       "kind": "step",
-      "summary": "The client folds feed items into messages, tool activity lines, approval cards and notes, and works out which files the latest run read or edited.",
-      "files": [
-        "src/web/ChatView.tsx"
-      ],
-      "fields": []
-    },
-    {
-      "id": "ct-heat",
-      "parent": "chat-turn",
-      "label": "Light up map",
-      "kind": "step",
-      "summary": "The chat's map pane marks the nodes whose files the run read (blue) or edited (amber).",
+      "summary": "The chat's EventSource collects items and derive() folds them into messages, tool activities and approval cards.",
       "files": [
         "src/web/ChatView.tsx",
-        "src/web/MapCanvas.tsx"
+        "src/web/feedModel.ts"
       ],
       "fields": []
     },
@@ -115,7 +102,7 @@
       "parent": "chat-turn",
       "label": "Stop button",
       "kind": "step",
-      "summary": "stopTurn cancels any open approval cards and sends SIGINT so the turn ends cleanly and is recorded.",
+      "summary": "POST /api/chats/:id/stop cancels open approval cards and SIGINTs the claude process.",
       "files": [
         "src/server/runner.ts",
         "src/server/main.ts"
@@ -127,53 +114,40 @@
       "parent": "chat-turn",
       "label": "Finish run",
       "kind": "step",
-      "summary": "When the process exits, the run is marked finished, failed or stopped with git HEAD after, the edit lock is released and leftover cards are cancelled.",
-      "files": [
-        "src/server/runner.ts",
-        "src/server/hook.ts"
-      ],
-      "fields": []
-    },
-    {
-      "id": "tool-approval",
-      "parent": null,
-      "label": "Tool approval hook",
-      "kind": "flow",
-      "summary": "Claude Code calls Flightdeck's PreToolUse HTTP hook before every tool use, and Flightdeck allows it, denies it, or holds it until the user clicks an approval card.",
-      "files": [
-        "src/server/hook.ts"
-      ],
-      "fields": []
-    },
-    {
-      "id": "ta-receive",
-      "parent": "tool-approval",
-      "label": "Receive hook call",
-      "kind": "step",
-      "summary": "POST /hook on loopback parses the payload; an unreadable payload is denied.",
-      "files": [
-        "src/server/main.ts",
-        "src/shared/contracts.ts"
-      ],
-      "fields": []
-    },
-    {
-      "id": "ta-find-run",
-      "parent": "tool-approval",
-      "label": "Find active run",
-      "kind": "step",
-      "summary": "The session id is matched to a chat with a running turn; with no running turn, the call is denied.",
+      "summary": "On process close the run is marked finished/failed/stopped, the edit lock released and pending cards cancelled.",
       "files": [
         "src/server/runner.ts"
       ],
       "fields": []
     },
     {
+      "id": "tool-approval",
+      "parent": null,
+      "label": "Tool approval",
+      "kind": "flow",
+      "summary": "Every tool call the chat's claude makes is held at Flightdeck's PreToolUse hook and decided by mode, edit lock, project rules, or a card the user clicks.",
+      "files": [
+        "src/server/hook.ts"
+      ],
+      "fields": []
+    },
+    {
+      "id": "ta-hook",
+      "parent": "tool-approval",
+      "label": "Hook endpoint",
+      "kind": "step",
+      "summary": "POST /hook parses Claude Code's payload and answers with a PreToolUse permission decision.",
+      "files": [
+        "src/server/main.ts"
+      ],
+      "fields": []
+    },
+    {
       "id": "ta-mode-lock",
       "parent": "tool-approval",
-      "label": "Mode and edit lock",
+      "label": "Mode and lock check",
       "kind": "step",
-      "summary": "Edits are refused in Discuss mode, or when another chat in the project holds the edit lock.",
+      "summary": "Edits are refused in Discuss mode, and refused when another chat in the project holds the edit lock.",
       "files": [
         "src/server/hook.ts"
       ],
@@ -182,35 +156,34 @@
     {
       "id": "ta-rules",
       "parent": "tool-approval",
-      "label": "Evaluate project rules",
+      "label": "Evaluate rules",
       "kind": "step",
-      "summary": "The project's allow/deny rules are matched against the tool and its input; output redirection is never covered by an allow rule.",
+      "summary": "The project's allow/ask/deny rules (Claude Code syntax, deny > ask > allow, every part of a shell command checked) bucket the call.",
       "files": [
-        "src/server/rules.ts"
+        "src/server/rules.ts",
+        "src/shared/shell.ts"
       ],
       "fields": []
     },
     {
       "id": "ta-card",
       "parent": "tool-approval",
-      "label": "Show approval card",
+      "label": "Hold approval card",
       "kind": "step",
-      "summary": "In the Ask case, a pending approval is recorded and pushed to the feed with a suggested pattern, and Claude Code waits until it is answered or times out.",
+      "summary": "An 'ask' verdict records a pending approval, shows a card in the feed and holds the hook until a click or timeout.",
       "files": [
-        "src/server/hook.ts",
-        "src/server/feed.ts"
+        "src/server/hook.ts"
       ],
       "fields": []
     },
     {
       "id": "ta-click",
       "parent": "tool-approval",
-      "label": "User decides",
+      "label": "Click allow/deny",
       "kind": "step",
-      "summary": "The card posts allow (optionally 'always allow' with a pattern) or deny with a reason.",
+      "summary": "The approval card lets the user allow once, deny with a reason, or save an 'always allow' pattern.",
       "files": [
-        "src/web/ChatView.tsx",
-        "src/web/api.ts"
+        "src/web/ChatView.tsx"
       ],
       "fields": []
     },
@@ -219,7 +192,19 @@
       "parent": "tool-approval",
       "label": "Resolve approval",
       "kind": "step",
-      "summary": "resolveApproval saves any always-allow rule, settles the approval in the DB and feed, and wakes the waiting hook.",
+      "summary": "POST /api/approvals/:id settles the pending card, optionally saves the rule, and releases the held hook with the answer.",
+      "files": [
+        "src/server/hook.ts",
+        "src/server/main.ts"
+      ],
+      "fields": []
+    },
+    {
+      "id": "ta-save-rule",
+      "parent": "tool-approval",
+      "label": "Save allow rule",
+      "kind": "step",
+      "summary": "An 'always allow' pattern becomes a new allow rule in the project's rules table.",
       "files": [
         "src/server/hook.ts",
         "src/server/db.ts"
@@ -227,106 +212,11 @@
       "fields": []
     },
     {
-      "id": "ta-answer",
-      "parent": "tool-approval",
-      "label": "Answer Claude Code",
-      "kind": "step",
-      "summary": "The decision goes back as a PreToolUse permissionDecision, and an allowed edit takes the project's edit lock.",
-      "files": [
-        "src/server/hook.ts"
-      ],
-      "fields": []
-    },
-    {
-      "id": "new-project",
-      "parent": null,
-      "label": "New project",
-      "kind": "flow",
-      "summary": "Creates a brand-new git repo for a chosen stack and opens a Build chat whose first turn has Claude scaffold it under the normal approval rules.",
-      "files": [
-        "src/web/App.tsx"
-      ],
-      "fields": []
-    },
-    {
-      "id": "np-form",
-      "parent": "new-project",
-      "label": "Pick name and stack",
-      "kind": "step",
-      "summary": "The New project form takes a name, a folder (derived from the name until edited), a stack from STACKS and an optional description.",
-      "files": [
-        "src/web/App.tsx",
-        "src/shared/stacks.ts",
-        "src/web/api.ts"
-      ],
-      "fields": []
-    },
-    {
-      "id": "np-validate",
-      "parent": "new-project",
-      "label": "Check folder",
-      "kind": "step",
-      "summary": "The server requires an absolute path that does not exist yet, pointing existing repos to Add existing instead.",
-      "files": [
-        "src/server/main.ts",
-        "src/shared/contracts.ts"
-      ],
-      "fields": []
-    },
-    {
-      "id": "np-init",
-      "parent": "new-project",
-      "label": "git init",
-      "kind": "step",
-      "summary": "initRepo creates the folder and runs `git init -b main` in it.",
-      "files": [
-        "src/server/main.ts"
-      ],
-      "fields": []
-    },
-    {
-      "id": "np-insert",
-      "parent": "new-project",
-      "label": "Insert with rules",
-      "kind": "step",
-      "summary": "insertProject saves the project with the default models and copies in the template approval rules.",
-      "files": [
-        "src/server/main.ts",
-        "src/server/rules.ts",
-        "src/server/db.ts"
-      ],
-      "fields": []
-    },
-    {
-      "id": "np-chat",
-      "parent": "new-project",
-      "label": "Open scaffold chat",
-      "kind": "step",
-      "summary": "A Build-mode chat titled 'Scaffold: <stack>' is created and its first turn starts with scaffoldPrompt's instructions.",
-      "files": [
-        "src/server/main.ts",
-        "src/shared/stacks.ts",
-        "src/server/runner.ts"
-      ],
-      "fields": []
-    },
-    {
-      "id": "np-open",
-      "parent": "new-project",
-      "label": "Switch to chat",
-      "kind": "step",
-      "summary": "The app adds the project, switches to it and opens the scaffold chat, showing an error if the turn could not start.",
-      "files": [
-        "src/web/App.tsx"
-      ],
-      "fields": []
-    },
-    {
       "id": "map-generation",
       "parent": null,
-      "label": "Generate a map",
+      "label": "Map generation",
       "kind": "flow",
-      "summary": "A read-only Claude agent explores a project and returns an architecture, data-model or flows map as structured output, which is validated and written to .flightdeck/.",
+      "summary": "'Map this project' runs a read-only claude agent with a JSON schema and stores the validated diagram in .flightdeck/<view>.json.",
       "files": [
         "src/server/maps.ts"
       ],
@@ -337,9 +227,19 @@
       "parent": "map-generation",
       "label": "Request generation",
       "kind": "step",
-      "summary": "'Map this project' or 'Refresh map' posts to the generate endpoint for the current view.",
+      "summary": "The Map screen's button posts to the generate endpoint and starts polling the job.",
       "files": [
-        "src/web/MapView.tsx",
+        "src/web/MapView.tsx"
+      ],
+      "fields": []
+    },
+    {
+      "id": "mg-route",
+      "parent": "map-generation",
+      "label": "Generate endpoint",
+      "kind": "step",
+      "summary": "POST /api/projects/:id/maps/:view/generate starts a job, one per project at a time.",
+      "files": [
         "src/server/main.ts"
       ],
       "fields": []
@@ -349,10 +249,9 @@
       "parent": "map-generation",
       "label": "Spawn mapping agent",
       "kind": "step",
-      "summary": "startGeneration allows one job per project and runs `claude -p` with the view prompt, a JSON schema, disallowed write tools and its own hook.",
+      "summary": "startGeneration spawns claude with the view prompt, --json-schema, disallowed write tools, a scratch git index and the /hook/map hook.",
       "files": [
-        "src/server/maps.ts",
-        "src/shared/contracts.ts"
+        "src/server/maps.ts"
       ],
       "fields": []
     },
@@ -361,23 +260,10 @@
       "parent": "map-generation",
       "label": "Read-only hook",
       "kind": "step",
-      "summary": "/hook/map allows only read, search and git-inspection tools for the job's session, with no cards; everything else is refused.",
+      "summary": "POST /hook/map allows only reading, searching and git inspection, denying everything else without cards.",
       "files": [
         "src/server/main.ts",
-        "src/server/maps.ts",
-        "src/server/rules.ts"
-      ],
-      "fields": []
-    },
-    {
-      "id": "mg-progress",
-      "parent": "map-generation",
-      "label": "Track progress",
-      "kind": "step",
-      "summary": "Tool-use events update the job's step count and activity line, which the UI polls.",
-      "files": [
-        "src/server/maps.ts",
-        "src/web/MapView.tsx"
+        "src/server/maps.ts"
       ],
       "fields": []
     },
@@ -386,7 +272,7 @@
       "parent": "map-generation",
       "label": "Validate map",
       "kind": "step",
-      "summary": "validateMap rejects structural problems (duplicate ids, unknown parents, cycles) and drops missing files and bad edges, keeping a warning for each.",
+      "summary": "The structured output is schema-checked, then validateMap rejects structural errors and drops nonexistent files, bad edges and bad citations.",
       "files": [
         "src/server/maps.ts"
       ],
@@ -395,9 +281,9 @@
     {
       "id": "mg-write",
       "parent": "map-generation",
-      "label": "Write .flightdeck file",
+      "label": "Write map file",
       "kind": "step",
-      "summary": "The map is stored with its commit, model and warnings as .flightdeck/<view>.json in the project repo.",
+      "summary": "The map is stored with the HEAD commit(s) it was made from in the project's maps directory.",
       "files": [
         "src/server/maps.ts",
         ".flightdeck/"
@@ -409,7 +295,7 @@
       "parent": null,
       "label": "Browse a map",
       "kind": "flow",
-      "summary": "The Map screen loads a stored map, flags nodes whose files changed since it was made, and lets the reader drill down and open files.",
+      "summary": "The Map screen loads a stored map with change detection, lays out one level at a time, and opens the files and chats behind nodes.",
       "files": [
         "src/web/MapView.tsx"
       ],
@@ -418,103 +304,182 @@
     {
       "id": "mb-load",
       "parent": "map-browse",
-      "label": "Load map",
+      "label": "Load and poll map",
       "kind": "step",
-      "summary": "The Map screen fetches the view and polls it; the server reads .flightdeck/<view>.json.",
+      "summary": "useMap fetches the view and re-polls (2s while generating, 15s otherwise).",
       "files": [
-        "src/web/MapView.tsx",
-        "src/server/main.ts",
-        "src/server/maps.ts"
+        "src/web/MapView.tsx"
       ],
       "fields": []
     },
     {
-      "id": "mb-stale",
+      "id": "mb-route",
+      "parent": "map-browse",
+      "label": "Map endpoint",
+      "kind": "step",
+      "summary": "GET /api/projects/:id/maps/:view reads the map file and attaches stale nodes, changed files and the job status.",
+      "files": [
+        "src/server/main.ts"
+      ],
+      "fields": []
+    },
+    {
+      "id": "mb-changes",
       "parent": "map-browse",
       "label": "Detect changes",
       "kind": "step",
-      "summary": "changedSince diffs the map's commit against the working tree, and staleNodeIds marks the covering nodes and their ancestors.",
+      "summary": "changedSince diffs against the map's commit(s) on a scratch index, and staleNodeIds marks nodes covering changed files plus their ancestors.",
       "files": [
         "src/server/maps.ts"
       ],
       "fields": []
     },
     {
-      "id": "mb-canvas",
+      "id": "mb-layout",
       "parent": "map-browse",
-      "label": "Draw and drill",
+      "label": "Lift edges and lay out",
       "kind": "step",
-      "summary": "MapCanvas lays out the current level with React Flow and ELK; double-click or breadcrumbs move between levels.",
+      "summary": "liftEdges re-targets edges to the visible level and ELK computes positions and orthogonal routes for React Flow.",
       "files": [
-        "src/web/MapCanvas.tsx"
-      ],
-      "fields": []
-    },
-    {
-      "id": "mb-panel",
-      "parent": "map-browse",
-      "label": "Node panel",
-      "kind": "step",
-      "summary": "The side panel shows the selected node's summary, fields, stale warning and files.",
-      "files": [
-        "src/web/MapView.tsx"
+        "src/web/MapCanvas.tsx",
+        "src/web/graph.ts"
       ],
       "fields": []
     },
     {
       "id": "mb-file",
       "parent": "map-browse",
-      "label": "View file",
+      "label": "Open file viewer",
       "kind": "step",
-      "summary": "The file viewer fetches a file or directory listing that is confined to the project and never shows .git.",
+      "summary": "The viewer fetches a node's file or folder and shows it highlighted, with links back to the nodes covering it.",
       "files": [
-        "src/web/FileViewer.tsx",
-        "src/server/files.ts"
+        "src/web/FileViewer.tsx"
       ],
       "fields": []
     },
     {
-      "id": "node-to-chat",
-      "parent": null,
-      "label": "Discuss node in chat",
-      "kind": "flow",
-      "summary": "'Discuss in a new chat' on a map node creates a chat with that node already attached to its first message.",
+      "id": "mb-file-route",
+      "parent": "map-browse",
+      "label": "Read file safely",
+      "kind": "step",
+      "summary": "GET /api/projects/:id/file returns a file or directory listing, refusing paths outside the project or inside .git.",
+      "files": [
+        "src/server/files.ts",
+        "src/server/main.ts"
+      ],
+      "fields": []
+    },
+    {
+      "id": "mb-discuss",
+      "parent": "map-browse",
+      "label": "Discuss in new chat",
+      "kind": "step",
+      "summary": "'Discuss in a new chat' creates a chat and hands the selected node to it as initial context.",
       "files": [
         "src/web/App.tsx"
       ],
       "fields": []
     },
     {
-      "id": "nc-click",
-      "parent": "node-to-chat",
-      "label": "Click Discuss",
-      "kind": "step",
-      "summary": "The node panel hands the node reference to the app.",
+      "id": "chat-map-pane",
+      "parent": null,
+      "label": "Chat map pane",
+      "kind": "flow",
+      "summary": "Beside a chat, the map lights up the files the latest run read or edited and lets the user attach nodes to the next message.",
       "files": [
-        "src/web/MapView.tsx"
+        "src/web/ChatView.tsx"
       ],
       "fields": []
     },
     {
-      "id": "nc-create",
-      "parent": "node-to-chat",
-      "label": "Create chat",
+      "id": "cm-touched",
+      "parent": "chat-map-pane",
+      "label": "Collect touched files",
       "kind": "step",
-      "summary": "The app creates a chat (new session id, Discuss mode) and records the node handoff for it.",
+      "summary": "derive() records which repo-relative paths the latest run read or successfully edited.",
+      "files": [
+        "src/web/feedModel.ts"
+      ],
+      "fields": []
+    },
+    {
+      "id": "cm-heat",
+      "parent": "chat-map-pane",
+      "label": "Heat map nodes",
+      "kind": "step",
+      "summary": "nodesForFile maps each touched file to its most specific covering nodes, colored read or edited.",
+      "files": [
+        "src/web/ChatView.tsx",
+        "src/web/graph.ts"
+      ],
+      "fields": []
+    },
+    {
+      "id": "cm-attach",
+      "parent": "chat-map-pane",
+      "label": "Attach node",
+      "kind": "step",
+      "summary": "Clicking a node toggles it as a context chip on the composer.",
+      "files": [
+        "src/web/ChatView.tsx"
+      ],
+      "fields": []
+    },
+    {
+      "id": "new-project",
+      "parent": null,
+      "label": "Create project",
+      "kind": "flow",
+      "summary": "A brand-new project gets a git-initialized folder, template rules, and a Build chat that scaffolds the chosen stack.",
+      "files": [
+        "src/web/App.tsx"
+      ],
+      "fields": []
+    },
+    {
+      "id": "np-form",
+      "parent": "new-project",
+      "label": "New project form",
+      "kind": "step",
+      "summary": "The sidebar form collects name, folder under the browse root, stack and description.",
       "files": [
         "src/web/App.tsx",
+        "src/shared/stacks.ts"
+      ],
+      "fields": []
+    },
+    {
+      "id": "np-route",
+      "parent": "new-project",
+      "label": "Create endpoint",
+      "kind": "step",
+      "summary": "POST /api/projects/new checks the folder is new and under the browse root, then runs git init.",
+      "files": [
         "src/server/main.ts"
       ],
       "fields": []
     },
     {
-      "id": "nc-attach",
-      "parent": "node-to-chat",
-      "label": "Prefill context",
+      "id": "np-insert",
+      "parent": "new-project",
+      "label": "Insert project + rules",
       "kind": "step",
-      "summary": "ChatView opens with the node as a context chip, ready to send with the next message.",
+      "summary": "insertProject stores the project with default models and copies TEMPLATE_RULES as its own rules.",
       "files": [
-        "src/web/ChatView.tsx"
+        "src/server/main.ts",
+        "src/server/rules.ts"
+      ],
+      "fields": []
+    },
+    {
+      "id": "np-scaffold",
+      "parent": "new-project",
+      "label": "Start scaffold turn",
+      "kind": "step",
+      "summary": "A Build-mode chat is created and its first turn runs the stack's scaffold prompt.",
+      "files": [
+        "src/server/main.ts",
+        "src/shared/stacks.ts"
       ],
       "fields": []
     },
@@ -523,100 +488,75 @@
       "parent": null,
       "label": "Add existing project",
       "kind": "flow",
-      "summary": "Registers an existing git repository on the box as a project and gives it the starting approval rules.",
+      "summary": "The user browses folders under ~/dev and registers a git repository (or a folder of repositories) as a project.",
       "files": [
         "src/web/App.tsx"
       ],
       "fields": []
     },
     {
-      "id": "ap-form",
+      "id": "ap-browse",
       "parent": "add-project",
-      "label": "Submit path",
+      "label": "Folder browser",
       "kind": "step",
-      "summary": "The Add existing form posts a folder path and a name that defaults to the folder name.",
+      "summary": "The browser walks folders and offers 'Choose' on ones that are, or contain, git repositories.",
       "files": [
-        "src/web/App.tsx",
-        "src/web/api.ts"
+        "src/web/App.tsx"
       ],
       "fields": []
     },
     {
-      "id": "ap-validate",
+      "id": "ap-browse-route",
       "parent": "add-project",
-      "label": "Check folder",
+      "label": "Browse endpoint",
       "kind": "step",
-      "summary": "The server requires an absolute path to an existing directory that is a git repo and isn't already a project.",
+      "summary": "GET /api/browse lists subfolders after resolving symlinks, confined to the browse root.",
       "files": [
         "src/server/main.ts"
       ],
       "fields": []
     },
     {
-      "id": "ap-insert",
+      "id": "ap-add-route",
       "parent": "add-project",
-      "label": "Insert with rules",
+      "label": "Add endpoint",
       "kind": "step",
-      "summary": "insertProject saves the row with the default models and copies in the template rules.",
+      "summary": "POST /api/projects validates the path is an existing repo (or folder of repos) not already added, then inserts it.",
       "files": [
         "src/server/main.ts",
-        "src/server/rules.ts",
-        "src/server/db.ts"
+        "src/server/maps.ts"
       ],
       "fields": []
     },
     {
-      "id": "manage-rules",
+      "id": "request-admission",
       "parent": null,
-      "label": "Edit project settings",
+      "label": "Serve and admit",
       "kind": "flow",
-      "summary": "Project settings screen to change the default Discuss/Build models and to add or delete approval rules.",
-      "files": [
-        "src/web/RulesView.tsx"
-      ],
-      "fields": []
-    },
-    {
-      "id": "mr-ui",
-      "parent": "manage-rules",
-      "label": "Settings screen",
-      "kind": "step",
-      "summary": "Lists rules and the model defaults, and sends changes.",
-      "files": [
-        "src/web/RulesView.tsx",
-        "src/web/api.ts"
-      ],
-      "fields": []
-    },
-    {
-      "id": "mr-api",
-      "parent": "manage-rules",
-      "label": "Rules/settings API",
-      "kind": "step",
-      "summary": "The endpoints insert or delete rules and update the project's models in SQLite.",
-      "files": [
-        "src/server/main.ts",
-        "src/server/db.ts"
-      ],
-      "fields": []
-    },
-    {
-      "id": "gateway-request",
-      "parent": null,
-      "label": "Gateway request",
-      "kind": "flow",
-      "summary": "Requests from the SSO gateway arrive on the docker0 listener, which only serves them when they carry the secret header and never exposes the hook endpoints.",
+      "summary": "The server starts its listeners (optionally launched by the Mac app) and admits a request only from loopback names or the SSO gateway's secret.",
       "files": [
         "src/server/main.ts"
       ],
       "fields": []
     },
     {
-      "id": "gw-listen",
-      "parent": "gateway-request",
-      "label": "Gateway listener",
+      "id": "ra-mac-app",
+      "parent": "request-admission",
+      "label": "Mac app launch",
       "kind": "step",
-      "summary": "Starts only if FLIGHTDECK_GATEWAY_HOST is set and the secret is at least 32 bytes.",
+      "summary": "Flightdeck.app starts the server as its child with settings from Info.plist, opens the browser when /health answers, and stops it on quit.",
+      "files": [
+        "scripts/mac/FlightdeckApp.swift",
+        "scripts/mac/install.sh"
+      ],
+      "fields": []
+    },
+    {
+      "id": "ra-listeners",
+      "parent": "request-admission",
+      "label": "Start listeners",
+      "kind": "step",
+      "summary": "serve() binds the loopback port, an optional port-80 forwarding target, and an optional gateway listener.",
       "files": [
         "src/server/main.ts",
         "src/server/config.ts"
@@ -624,25 +564,35 @@
       "fields": []
     },
     {
-      "id": "gw-filter",
-      "parent": "gateway-request",
-      "label": "Filter request",
+      "id": "ra-local-guard",
+      "parent": "request-admission",
+      "label": "Loopback guard",
       "kind": "step",
-      "summary": "Paths under /hook get 404, and a missing or wrong X-Flightdeck-Gateway secret (compared in constant time) gets 403.",
+      "summary": "refuseLocal requires a local Host name and, for writes, a local Origin and JSON body, blocking DNS rebinding and cross-site requests.",
+      "files": [
+        "src/server/guard.ts"
+      ],
+      "fields": []
+    },
+    {
+      "id": "ra-gateway",
+      "parent": "request-admission",
+      "label": "Gateway secret check",
+      "kind": "step",
+      "summary": "The gateway listener 404s /hook paths and requires the X-Flightdeck-Gateway secret via a timing-safe compare.",
       "files": [
         "src/server/main.ts"
       ],
       "fields": []
     },
     {
-      "id": "gw-app",
-      "parent": "gateway-request",
-      "label": "Serve app",
+      "id": "ra-routes",
+      "parent": "request-admission",
+      "label": "Hono app",
       "kind": "step",
-      "summary": "Accepted requests go to the same Hono app: the API, SSE and the built web UI.",
+      "summary": "Admitted requests reach the Hono API routes and the built web app served from dist/.",
       "files": [
-        "src/server/main.ts",
-        "src/web/main.tsx"
+        "src/server/main.ts"
       ],
       "fields": []
     }
@@ -650,248 +600,291 @@
   "edges": [
     {
       "from": "ct-compose",
-      "to": "ct-resolve",
-      "label": "POST /api/chats/:id/messages {text, context}"
+      "to": "ct-messages-route",
+      "label": "POST /api/chats/:id/messages (text + node refs)",
+      "evidence": "src/web/ChatView.tsx:92"
     },
     {
-      "from": "ct-resolve",
+      "from": "ct-messages-route",
       "to": "ct-spawn",
-      "label": "text + resolved nodes"
+      "label": "text + resolved context nodes",
+      "evidence": "src/server/main.ts:283"
     },
     {
       "from": "ct-spawn",
-      "to": "ct-stream",
-      "label": "stdout stream-json"
+      "to": "ct-parse-stream",
+      "label": "stream-json stdout",
+      "evidence": "src/server/runner.ts:132"
     },
     {
-      "from": "ct-stream",
-      "to": "ct-feed",
-      "label": "FeedItem"
+      "from": "ct-parse-stream",
+      "to": "ct-feed-store",
+      "label": "claude events",
+      "evidence": "src/server/runner.ts:149"
     },
     {
-      "from": "ct-feed",
+      "from": "ct-feed-store",
       "to": "ct-sse",
-      "label": "replay + live items"
+      "label": "live feed items",
+      "evidence": "src/server/main.ts:314"
     },
     {
       "from": "ct-sse",
       "to": "ct-render",
-      "label": "SSE /api/chats/:id/feed"
+      "label": "SSE FeedItems",
+      "evidence": "src/web/ChatView.tsx:34"
     },
     {
-      "from": "ct-render",
-      "to": "ct-heat",
-      "label": "touched files"
+      "from": "ct-parse-stream",
+      "to": "ct-close",
+      "label": "result / process exit",
+      "evidence": "src/server/runner.ts:161"
+    },
+    {
+      "from": "ct-close",
+      "to": "ct-feed-store",
+      "label": "run status",
+      "evidence": "src/server/runner.ts:177"
     },
     {
       "from": "ct-render",
       "to": "ct-stop",
-      "label": "POST /api/chats/:id/stop"
+      "label": "POST /api/chats/:id/stop",
+      "evidence": "src/web/ChatView.tsx:237"
     },
     {
       "from": "ct-stop",
       "to": "ct-close",
-      "label": "SIGINT"
-    },
-    {
-      "from": "ct-stream",
-      "to": "ct-close",
-      "label": "result / process exit"
+      "label": "SIGINT",
+      "evidence": "src/server/runner.ts:189"
     },
     {
       "from": "ct-close",
-      "to": "ct-feed",
-      "label": "run status"
+      "to": "ta-card",
+      "label": "cancel open cards",
+      "evidence": "src/server/runner.ts:164"
     },
     {
       "from": "ct-spawn",
-      "to": "ta-receive",
-      "label": "PreToolUse HTTP hook"
+      "to": "ta-hook",
+      "label": "PreToolUse HTTP POST /hook",
+      "evidence": "src/server/runner.ts:58"
     },
     {
-      "from": "ta-receive",
-      "to": "ta-find-run",
-      "label": "session_id"
-    },
-    {
-      "from": "ta-find-run",
+      "from": "ta-hook",
       "to": "ta-mode-lock",
-      "label": "run, mode"
+      "label": "HookPayload",
+      "evidence": "src/server/main.ts:35"
     },
     {
       "from": "ta-mode-lock",
       "to": "ta-rules",
-      "label": "not refused"
-    },
-    {
-      "from": "ta-mode-lock",
-      "to": "ta-answer",
-      "label": "deny"
-    },
-    {
-      "from": "ta-rules",
-      "to": "ta-answer",
-      "label": "allow / deny"
+      "label": "tool call",
+      "evidence": "src/server/hook.ts:85"
     },
     {
       "from": "ta-rules",
       "to": "ta-card",
-      "label": "ask"
+      "label": "ask verdict",
+      "evidence": "src/server/hook.ts:108"
     },
     {
       "from": "ta-card",
-      "to": "ct-feed",
-      "label": "pending approval item"
-    },
-    {
-      "from": "ta-card",
-      "to": "ta-click",
-      "label": "card in feed"
+      "to": "ct-feed-store",
+      "label": "approval card item",
+      "evidence": "src/server/hook.ts:110"
     },
     {
       "from": "ta-click",
       "to": "ta-resolve",
-      "label": "POST /api/approvals/:id"
+      "label": "POST /api/approvals/:id",
+      "evidence": "src/web/ChatView.tsx:452"
     },
     {
       "from": "ta-resolve",
-      "to": "ta-answer",
-      "label": "decision"
+      "to": "ta-save-rule",
+      "label": "alwaysAllowPattern",
+      "evidence": "src/server/hook.ts:136"
     },
     {
-      "from": "np-form",
-      "to": "np-validate",
-      "label": "POST /api/projects/new {name, path, stack, description}"
-    },
-    {
-      "from": "np-validate",
-      "to": "np-init",
-      "label": "path"
-    },
-    {
-      "from": "np-init",
-      "to": "np-insert",
-      "label": "name, path"
-    },
-    {
-      "from": "np-insert",
-      "to": "np-chat",
-      "label": "project"
-    },
-    {
-      "from": "np-chat",
-      "to": "ct-spawn",
-      "label": "startTurn(scaffoldPrompt)"
-    },
-    {
-      "from": "np-chat",
-      "to": "np-open",
-      "label": "{project, chatId, error?}"
-    },
-    {
-      "from": "np-open",
-      "to": "ct-render",
-      "label": "opens scaffold chat"
+      "from": "ta-resolve",
+      "to": "ta-hook",
+      "label": "allow / deny answer",
+      "evidence": "src/server/hook.ts:142"
     },
     {
       "from": "mg-request",
+      "to": "mg-route",
+      "label": "POST /maps/:view/generate",
+      "evidence": "src/web/MapView.tsx:102"
+    },
+    {
+      "from": "mg-route",
       "to": "mg-spawn",
-      "label": "POST /maps/:view/generate"
+      "label": "project + view",
+      "evidence": "src/server/main.ts:211"
     },
     {
       "from": "mg-spawn",
       "to": "mg-hook",
-      "label": "PreToolUse /hook/map"
-    },
-    {
-      "from": "mg-spawn",
-      "to": "mg-progress",
-      "label": "tool_use events"
+      "label": "PreToolUse HTTP POST /hook/map",
+      "evidence": "src/server/maps.ts:357"
     },
     {
       "from": "mg-spawn",
       "to": "mg-validate",
-      "label": "structured_output"
+      "label": "structured_output",
+      "evidence": "src/server/maps.ts:403"
     },
     {
       "from": "mg-validate",
       "to": "mg-write",
-      "label": "nodes, edges, warnings"
+      "label": "nodes, edges, warnings",
+      "evidence": "src/server/maps.ts:410"
     },
     {
       "from": "mg-write",
-      "to": "mb-load",
-      "label": ".flightdeck/<view>.json"
+      "to": "mb-route",
+      "label": "reads .flightdeck/<view>.json",
+      "evidence": "src/server/main.ts:188"
     },
     {
       "from": "mb-load",
-      "to": "mb-stale",
-      "label": "map commit"
+      "to": "mb-route",
+      "label": "GET /api/projects/:id/maps/:view",
+      "evidence": "src/web/MapView.tsx:22"
     },
     {
-      "from": "mb-stale",
-      "to": "mb-canvas",
-      "label": "staleNodeIds"
+      "from": "mb-route",
+      "to": "mb-changes",
+      "label": "stored map's commit(s)",
+      "evidence": "src/server/main.ts:193"
     },
     {
-      "from": "mb-canvas",
-      "to": "mb-panel",
-      "label": "selected node"
+      "from": "mb-load",
+      "to": "mb-layout",
+      "label": "map + stale node ids",
+      "evidence": "src/web/MapView.tsx:171"
     },
     {
-      "from": "mb-panel",
+      "from": "mb-layout",
       "to": "mb-file",
-      "label": "GET /api/projects/:id/file"
+      "label": "selected node's file",
+      "evidence": "src/web/MapView.tsx:208"
     },
     {
-      "from": "mb-panel",
-      "to": "nc-click",
-      "label": "node ref"
+      "from": "mb-file",
+      "to": "mb-file-route",
+      "label": "GET /api/projects/:id/file",
+      "evidence": "src/web/FileViewer.tsx:65"
     },
     {
-      "from": "nc-click",
-      "to": "nc-create",
-      "label": "POST /api/projects/:id/chats"
+      "from": "mb-layout",
+      "to": "mb-discuss",
+      "label": "selected node",
+      "evidence": "src/web/MapView.tsx:183"
     },
     {
-      "from": "nc-create",
-      "to": "nc-attach",
-      "label": "initialContext"
-    },
-    {
-      "from": "nc-attach",
+      "from": "mb-discuss",
       "to": "ct-compose",
-      "label": "context chips"
+      "label": "new chat + attached node",
+      "evidence": "src/web/App.tsx:201"
     },
     {
-      "from": "ap-form",
-      "to": "ap-validate",
-      "label": "POST /api/projects"
+      "from": "ct-render",
+      "to": "cm-touched",
+      "label": "feed items",
+      "evidence": "src/web/ChatView.tsx:59"
     },
     {
-      "from": "ap-validate",
-      "to": "ap-insert",
-      "label": "name, path"
+      "from": "cm-touched",
+      "to": "cm-heat",
+      "label": "touched paths (read/edit)",
+      "evidence": "src/web/ChatView.tsx:274"
     },
     {
-      "from": "mr-ui",
-      "to": "mr-api",
-      "label": "rules / model settings"
+      "from": "cm-heat",
+      "to": "cm-attach",
+      "label": "clicked node",
+      "evidence": "src/web/ChatView.tsx:299"
     },
     {
-      "from": "mr-api",
-      "to": "ta-rules",
-      "label": "project rules"
+      "from": "cm-attach",
+      "to": "ct-compose",
+      "label": "context chip",
+      "evidence": "src/web/ChatView.tsx:107"
     },
     {
-      "from": "gw-listen",
-      "to": "gw-filter",
-      "label": "request"
+      "from": "np-form",
+      "to": "np-route",
+      "label": "POST /api/projects/new",
+      "evidence": "src/web/App.tsx:312"
     },
     {
-      "from": "gw-filter",
-      "to": "gw-app",
-      "label": "authorized request"
+      "from": "np-route",
+      "to": "np-insert",
+      "label": "name + path",
+      "evidence": "src/server/main.ts:138"
+    },
+    {
+      "from": "np-insert",
+      "to": "np-scaffold",
+      "label": "project id",
+      "evidence": "src/server/main.ts:139"
+    },
+    {
+      "from": "np-scaffold",
+      "to": "ct-spawn",
+      "label": "scaffold prompt",
+      "evidence": "src/server/main.ts:142"
+    },
+    {
+      "from": "ap-browse",
+      "to": "ap-browse-route",
+      "label": "GET /api/browse?path",
+      "evidence": "src/web/App.tsx:269"
+    },
+    {
+      "from": "ap-browse",
+      "to": "ap-add-route",
+      "label": "POST /api/projects",
+      "evidence": "src/web/App.tsx:245"
+    },
+    {
+      "from": "ap-add-route",
+      "to": "np-insert",
+      "label": "name + path",
+      "evidence": "src/server/main.ts:78"
+    },
+    {
+      "from": "ra-mac-app",
+      "to": "ra-listeners",
+      "label": "node src/server/main.ts",
+      "evidence": "scripts/mac/FlightdeckApp.swift:100"
+    },
+    {
+      "from": "ra-listeners",
+      "to": "ra-local-guard",
+      "label": "loopback request",
+      "evidence": "src/server/main.ts:341"
+    },
+    {
+      "from": "ra-listeners",
+      "to": "ra-gateway",
+      "label": "gateway request",
+      "evidence": "src/server/main.ts:370"
+    },
+    {
+      "from": "ra-local-guard",
+      "to": "ra-routes",
+      "label": "admitted request",
+      "evidence": "src/server/main.ts:342"
+    },
+    {
+      "from": "ra-gateway",
+      "to": "ra-routes",
+      "label": "admitted request",
+      "evidence": "src/server/main.ts:371"
     }
   ]
 }
