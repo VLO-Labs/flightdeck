@@ -6,16 +6,20 @@
 //     cross-site form can't send.
 // Returns why a request is refused, or null to let it through.
 const LOOPBACK = new Set(['localhost', '127.0.0.1', '[::1]']);
+// Names that point at this machine: *.localhost always does; others (e.g. flightdeck.vlolabs, set in
+// /etc/hosts) are listed in FLIGHTDECK_HOSTNAMES, comma-separated.
+const EXTRA = new Set((process.env.FLIGHTDECK_HOSTNAMES ?? 'flightdeck.vlolabs').split(',').map(s => s.trim().toLowerCase()).filter(Boolean));
+const isLocalName = (h: string) => LOOPBACK.has(h) || h.endsWith('.localhost') || EXTRA.has(h);
 
 export function refuseLocal(req: Request): string | null {
   const host = (req.headers.get('host') ?? '').toLowerCase().replace(/:\d+$/, '');
-  if (!LOOPBACK.has(host)) return 'Flightdeck only answers on localhost';
+  if (!isLocalName(host)) return 'Flightdeck only answers on this machine\'s own names';
   if (req.method === 'GET' || req.method === 'HEAD' || req.method === 'OPTIONS') return null;
 
   const origin = req.headers.get('origin');
   if (origin !== null) {
     let ok = false;
-    try { ok = LOOPBACK.has(new URL(origin).hostname.toLowerCase().replace(/^::1$/, '[::1]')); } catch { /* malformed */ }
+    try { ok = isLocalName(new URL(origin).hostname.toLowerCase().replace(/^::1$/, '[::1]')); } catch { /* malformed */ }
     if (!ok) return 'cross-site request refused';
   }
   const type = (req.headers.get('content-type') ?? '').toLowerCase();

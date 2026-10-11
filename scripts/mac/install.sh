@@ -6,13 +6,16 @@
 #   Data       ~/Library/Application Support/Flightdeck/data  (SQLite + chat feeds)
 #   Log        ~/Library/Logs/Flightdeck.log
 #
-# Opening Flightdeck.app starts the server on http://localhost:8100 if it isn't running, then opens
+# Opening Flightdeck.app starts the server on http://flightdeck.localhost:8100 if it isn't running, then opens
 # it in the browser. Re-run this script after pulling changes; it restarts a running server.
 set -euo pipefail
 REPO="$(cd "$(dirname "$0")/../.." && pwd)"
 HOME_DIR="$HOME/Library/Application Support/Flightdeck"
 APP_BUNDLE="$HOME/Applications/Flightdeck.app"
+# Not 80: macOS lets an ordinary app take port 80 only on every interface (the LAN), never on
+# loopback alone, and Flightdeck must stay loopback-only.
 PORT="${FLIGHTDECK_PORT:-8100}"
+HOST_NAME="${FLIGHTDECK_HOST_NAME:-flightdeck.localhost}" # *.localhost needs no /etc/hosts entry
 NODE="$(command -v node)" || { echo "node not found" >&2; exit 1; }
 CLAUDE="$HOME/.local/bin/claude"
 [ -x "$CLAUDE" ] || { echo "Claude Code not found at $CLAUDE (install it and run 'claude' once to log in)" >&2; exit 1; }
@@ -43,7 +46,7 @@ PLIST
 # so it keeps running after the launcher exits (stop it with scripts/mac/stop.sh).
 cat > "$APP_BUNDLE/Contents/MacOS/Flightdeck" <<LAUNCH
 #!/bin/bash
-URL="http://localhost:$PORT"
+URL="http://$HOST_NAME$([ "$PORT" = 80 ] || echo ":$PORT")"
 export PATH="\$HOME/.local/bin:$(dirname "$NODE"):/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 # An API key would silently replace the subscription login in \`claude -p\`.
 unset ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN
