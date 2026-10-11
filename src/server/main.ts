@@ -20,6 +20,7 @@ import { effectiveModel, isRunning, startTurn, stopTurn } from './runner.ts';
 import { TEMPLATE_RULES } from './rules.ts';
 import { changedSince, generatorDecision, jobFor, jobForSession, readMap, repoDirs, staleNodeIds, startGeneration, stopGeneration } from './maps.ts';
 import { viewFile } from './files.ts';
+import { refuseLocal } from './guard.ts';
 import { STACKS, scaffoldPrompt } from '../shared/stacks.ts';
 
 const app = new Hono();
@@ -324,7 +325,15 @@ app.get('/api/chats/:id/feed', c => {
 app.use('/*', serveStatic({ root: './dist' }));
 app.get('/*', serveStatic({ path: './dist/index.html' }));
 
-serve({ fetch: app.fetch, hostname: config.host, port: config.port }, info =>
+serve({
+  hostname: config.host,
+  port: config.port,
+  // No login on loopback: this check is what keeps other web pages from driving Flightdeck.
+  fetch: req => {
+    const why = refuseLocal(req);
+    return why ? new Response(why, { status: 403 }) : app.fetch(req);
+  },
+}, info =>
   console.log(`flightdeck on http://${config.host}:${info.port} · data ${config.dataDir} · default model ${config.defaultModel}`));
 
 // The gateway listener: only requests carrying the gateway's secret, and never the hook endpoints

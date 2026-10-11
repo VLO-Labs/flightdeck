@@ -217,8 +217,21 @@ export function App() {
   );
 }
 
+// Where projects live on this machine (the server's browse root, e.g. ~/dev): forms start there.
+let rootPromise: Promise<string> | null = null;
+function useProjectsRoot(): string {
+  const [root, setRoot] = useState('');
+  useEffect(() => {
+    rootPromise ??= api.browse().then(r => r.path).catch(() => '');
+    void rootPromise.then(setRoot);
+  }, []);
+  return root;
+}
+
 function AddProject({ onAdded, onCancel }: { onAdded: (p: Project) => void; onCancel: () => void }) {
-  const [path, setPath] = useState('/home/vlolabs/dev/');
+  const root = useProjectsRoot();
+  const [typed, setPath] = useState<string | null>(null);
+  const path = typed ?? (root ? `${root}/` : '');
   const [name, setName] = useState('');
   const [error, setError] = useState('');
   const [browsing, setBrowsing] = useState(false);
@@ -235,7 +248,7 @@ function AddProject({ onAdded, onCancel }: { onAdded: (p: Project) => void; onCa
         }
       }}
     >
-      <input value={path} onChange={e => setPath(e.target.value)} placeholder="/home/vlolabs/dev/vlolabs/hq" />
+      <input value={path} onChange={e => setPath(e.target.value)} placeholder={root ? `${root}/…` : 'Folder'} />
       <button type="button" className="small" onClick={() => setBrowsing(b => !b)}>{browsing ? 'Close browser' : 'Browse…'}</button>
       {browsing && <FolderBrowser onChoose={p => { setPath(p); setBrowsing(false); }} />}
       <input value={name} onChange={e => setName(e.target.value)} placeholder="Name (defaults to folder)" />
@@ -281,12 +294,13 @@ const slug = (s: string) => s.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').r
 function NewProject({ onCreated, onCancel }: { onCreated: (p: Project, chatId: number, error?: string) => void; onCancel: () => void }) {
   const [name, setName] = useState('');
   // The folder follows the name until it's edited by hand.
+  const root = useProjectsRoot();
   const [path, setPath] = useState<string | null>(null);
   const [stack, setStack] = useState<string>(STACKS[0].id);
   const [description, setDescription] = useState('');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
-  const folder = path ?? `/home/vlolabs/dev/vlolabs/${slug(name)}`;
+  const folder = path ?? (root ? `${root}/vlolabs/${slug(name)}` : '');
   return (
     <form
       className="add-project"
