@@ -69,11 +69,11 @@ pre { background: var(--code); padding: 8px; border-radius: 6px; overflow-x: aut
 .form-actions > button[type="submit"] { flex: 1; }
 .chat-list { display: flex; flex-direction: column; gap: 2px; }
 .chat-title { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.badge { font-size: 11px; padding: 1px 6px; border-radius: 10px; border: 1px solid var(--line); color: var(--muted); white-space: nowrap; }
+.badge { font-size: 12px; padding: 1px 6px; border-radius: 10px; border: 1px solid var(--line); color: var(--muted); white-space: nowrap; }
 .badge.run { color: var(--accent); border-color: var(--accent); }
 .badge.lock { color: var(--warn); border-color: var(--warn); }
 .badge.bad { color: var(--bad); border-color: var(--bad); }
-.path { font-family: var(--mono); font-size: 11px; color: var(--muted); word-break: break-all; margin-top: auto; }
+.path { font-family: var(--mono); font-size: 12px; color: var(--muted); word-break: break-all; margin-top: auto; }
 .add-project { display: flex; flex-direction: column; gap: 6px; }
 .browser { display: flex; flex-direction: column; gap: 4px; border: 1px solid var(--line); border-radius: 6px; padding: 6px; }
 .browser-path { font-size: 12px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; direction: rtl; text-align: left; }
@@ -103,7 +103,7 @@ pre { background: var(--code); padding: 8px; border-radius: 6px; overflow-x: aut
 /* Messages: yours in a tinted box with a small header; Claude's as plain readable prose. */
 .msg { overflow-wrap: anywhere; line-height: 1.6; }
 .msg.user { background: var(--user); padding: 8px 12px; border-radius: 8px; }
-.msg-head { font-size: 11.5px; font-weight: 600; color: var(--muted); margin-bottom: 2px; }
+.msg-head { font-size: 12px; font-weight: 600; color: var(--muted); margin-bottom: 2px; }
 .msg-head .muted { font-weight: 400; }
 .msg-text { white-space: pre-wrap; }
 .msg.assistant { padding: 0 12px; }
@@ -138,7 +138,7 @@ pre { background: var(--code); padding: 8px; border-radius: 6px; overflow-x: aut
 .activity-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 .activity-desc { color: var(--muted); font-family: system-ui, sans-serif; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 .file-ref { display: inline; padding: 0; font-family: inherit; font-size: inherit; }
-.state-tag { margin-left: auto; flex: none; font-family: system-ui, sans-serif; font-size: 11px; padding: 0 6px; border-radius: 8px; border: 1px solid currentColor; }
+.state-tag { margin-left: auto; flex: none; font-family: system-ui, sans-serif; font-size: 12px; padding: 0 6px; border-radius: 8px; border: 1px solid currentColor; }
 .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--muted); flex: none; transform: translateY(-1px); }
 .activity.st-done .dot { background: var(--good); }
 .activity.st-failed .dot, .activity.st-denied .dot { background: var(--bad); }
@@ -247,19 +247,19 @@ table.fields td { padding: 2px 8px 2px 0; vertical-align: top; }
 .map-node.selected { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent); }
 .map-node.stale { border-top-color: var(--warn); border-right-color: var(--warn); border-bottom-color: var(--warn); }
 .map-node.dim { opacity: .35; }
-.map-node-kind { display: flex; justify-content: space-between; gap: 6px; font-size: 10.5px; line-height: 15px; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; }
-.map-node-kind .stale-tag, .map-node-kind .heat-tag { text-transform: none; letter-spacing: 0; font-size: 11px; }
+.map-node-kind { display: flex; justify-content: space-between; gap: 6px; font-size: 11.5px; line-height: 16px; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; }
+.map-node-kind .stale-tag, .map-node-kind .heat-tag { text-transform: none; letter-spacing: 0; font-size: 12px; }
 .map-node-label {
-  font-weight: 600; font-size: 14.5px; line-height: 19px; overflow-wrap: anywhere;
+  font-weight: 600; font-size: 15.5px; line-height: 20px; overflow-wrap: anywhere;
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
 }
 .map-node-summary {
-  color: var(--muted); font-size: 12.5px; line-height: 17px; margin-top: 2px;
+  color: var(--muted); font-size: 13.5px; line-height: 19px; margin-top: 2px;
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
 }
-.map-node-fields { margin-top: 4px; font-family: var(--mono); font-size: 11px; line-height: 17px; }
+.map-node-fields { margin-top: 4px; font-family: var(--mono); font-size: 12px; line-height: 18px; }
 .map-node-fields > div { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.map-node-foot { display: flex; justify-content: space-between; gap: 6px; margin-top: auto; padding-top: 2px; font-size: 11.5px; line-height: 18px; color: var(--accent); }
+.map-node-foot { display: flex; justify-content: space-between; gap: 6px; margin-top: auto; padding-top: 2px; font-size: 12.5px; line-height: 18px; color: var(--accent); }
 .map-node-foot .inside { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 .stale-tag { color: var(--warn); white-space: nowrap; }
 /* Edges follow ELK's routes, not the handles; keep the handles for React Flow but don't draw them. */
@@ -277,7 +277,7 @@ table.fields td { padding: 2px 8px 2px 0; vertical-align: top; }
 .react-flow__edge-path.route-hover { stroke: var(--text); stroke-width: 2; }
 .react-flow__edge-path.route-dim { opacity: .25; }
 
-.panel-kind { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; }
+.panel-kind { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; }
 .panel-title { font-size: 17px; line-height: 1.3; margin: 0; overflow-wrap: anywhere; }
 .dir-out { color: var(--accent); } .dir-in { color: var(--good); }
 .link-row {
@@ -289,9 +289,9 @@ table.fields td { padding: 2px 8px 2px 0; vertical-align: top; }
 .link-row-name:hover:not(:disabled) { filter: none; color: var(--accent); }
 .link-part { display: flex; gap: 8px; align-items: baseline; justify-content: space-between; width: 100%; }
 .link-part .link-row-what { -webkit-line-clamp: 2; }
-.evidence, .inferred { flex: none; font-size: 11px; }
+.evidence, .inferred { flex: none; font-size: 12px; }
 .inferred { color: var(--muted); font-style: italic; }
-.panel-foot { font-size: 11.5px; margin-top: 8px; }
+.panel-foot { font-size: 12px; margin-top: 8px; }
 .link-row-what {
   font-size: 12px; color: var(--muted);
   display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;
@@ -345,7 +345,7 @@ table.fields td { padding: 2px 8px 2px 0; vertical-align: top; }
 .chat-map-legend { font-size: 12px; }
 .chat-map-canvas { flex: 1; position: relative; min-height: 0; }
 .chat-map-canvas .empty { position: absolute; inset: 0; padding: 16px; text-align: center; }
-.chat-map-foot { font-size: 11.5px; padding: 4px 10px; border-top: 1px solid var(--line); }
+.chat-map-foot { font-size: 12px; padding: 4px 10px; border-top: 1px solid var(--line); }
 button.ghost { background: none; color: var(--accent); border: 1px solid var(--line); }
 button.ghost:hover:not(:disabled) { filter: none; border-color: var(--accent); }
 
@@ -360,7 +360,7 @@ button.ghost:hover:not(:disabled) { filter: none; border-color: var(--accent); }
 .map-node.in-context { box-shadow: 0 0 0 2px var(--card-line); background: var(--card); }
 .map-node.heat-read { border-color: var(--accent); box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 45%, transparent); }
 .map-node.heat-edit { border-color: var(--warn); box-shadow: 0 0 0 3px color-mix(in srgb, var(--warn) 55%, transparent); }
-.heat-tag { font-size: 11px; }
+.heat-tag { font-size: 12px; }
 .heat-tag.read { color: var(--accent); }
 .heat-tag.edit { color: var(--warn); }
 .panel-actions { display: flex; gap: 8px; flex-wrap: wrap; }

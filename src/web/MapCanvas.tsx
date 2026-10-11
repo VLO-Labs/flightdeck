@@ -21,13 +21,14 @@ const elk = new ELK();
 // their border: the title wraps to at most two lines, the summary is clamped to two.
 // ---------------------------------------------------------------------------------------------
 
-const W = 248;
+const W = 264;
 const TITLE_CHARS = 26; // per line at the title's size in a W-wide card (conservative)
 const FIELDS_MAX = 12;
 const titleLines = (label: string) => (label.length > TITLE_CHARS ? 2 : 1);
+// Sizes match the card CSS (line heights: kind 16, title 20, summary 19×2 + 2, field 18, foot 20).
 const heightOf = (n: MapNode, hasChildren: boolean) =>
-  20 /* padding + border */ + 15 /* kind */ + titleLines(n.label) * 19 + (n.summary ? 36 : 0)
-  + Math.min(n.fields.length, FIELDS_MAX + 1) * 17 + (n.fields.length ? 4 : 0) + (hasChildren ? 20 : 0);
+  20 /* padding + border */ + 16 /* kind */ + titleLines(n.label) * 20 + (n.summary ? 40 : 0)
+  + Math.min(n.fields.length, FIELDS_MAX + 1) * 18 + (n.fields.length ? 4 : 0) + (hasChildren ? 20 : 0);
 
 // Columns for the architecture view, left to right, from the kinds the generator assigns.
 // Only a hint to the layout: it orders columns, it never adds or removes a relationship.
@@ -149,7 +150,7 @@ function InstanceRef({ into }: { into: { current: ReactFlowInstance<Node<CardDat
 const viewports = new Map<string, Viewport>();
 
 export function MapCanvas({
-  map, view, stale, path, onPath, selected, onSelect, inContext, heat, focus, remember, coveredRight = 0, minFitZoom = 0.55,
+  map, view, stale, path, onPath, selected, onSelect, inContext, heat, focus, remember, coveredRight = 0, minFitZoom = 0.65,
 }: {
   map: StoredMap;
   view: MapViewId;

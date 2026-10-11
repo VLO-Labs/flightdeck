@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { BrowseResponse, Chat, Project } from '../shared/contracts.ts';
 import { api } from './api.ts';
+import { tildify } from './paths.ts';
 import { STACKS } from '../shared/stacks.ts';
 import { ChatView } from './ChatView.tsx';
 import { RulesView } from './RulesView.tsx';
@@ -121,7 +122,7 @@ export function App() {
               ))}
               {chats.length === 0 && <div className="muted side-empty">No chats yet.</div>}
             </nav>
-            <div className="path" title={project.path}>{project.path}</div>
+            <div className="path" title={project.path}>{tildify(project.path)}</div>
           </>
         )}
         {error && <div className="error">{error}</div>}
@@ -205,7 +206,7 @@ function FolderBrowser({ onChoose }: { onChoose: (path: string) => void }) {
   return (
     <div className="browser">
       {/* <bdi> keeps the path left-to-right inside the right-to-left box that trims it from the left */}
-      <div className="browser-path" title={at.path}><bdi>{at.path}</bdi></div>
+      <div className="browser-path" title={at.path}><bdi>{tildify(at.path)}</bdi></div>
       {at.addable && <button type="button" className="small" onClick={() => onChoose(at.path)}>Choose this folder</button>}
       <div className="browser-list">
         {at.parent && <button type="button" className="browser-item" onClick={() => open(at.parent!)}>..</button>}
