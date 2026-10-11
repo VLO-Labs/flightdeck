@@ -1,8 +1,8 @@
 {
   "version": 1,
   "view": "data-model",
-  "generatedAt": "2026-10-11T01:48:20.171Z",
-  "commit": "ee279be04322e80929c503af4beffd13173015ac",
+  "generatedAt": "2026-10-11T02:30:34.015Z",
+  "commit": "7725a228761212162654c5d677599a4fce75546d",
   "model": "claude-opus-5-5",
   "warnings": [],
   "nodes": [
@@ -210,12 +210,12 @@
         {
           "name": "decision",
           "type": "text",
-          "note": "enum pending | allowed | denied"
+          "note": "enum pending | allowed | denied; pending reset to denied on boot"
         },
         {
           "name": "decided_by",
           "type": "text",
-          "note": "user | rule | timeout | lock"
+          "note": "user | rule | timeout | lock | mode"
         },
         {
           "name": "rule",
@@ -268,7 +268,12 @@
         {
           "name": "text",
           "type": "string",
-          "note": "user items: message text, plus mode/model/context"
+          "note": "user items: message text, plus mode/model/node context"
+        },
+        {
+          "name": "status",
+          "type": "text",
+          "note": "run items: started | finished | failed | stopped"
         }
       ]
     },
