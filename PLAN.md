@@ -33,6 +33,7 @@ are produced by the agent from the code, never authored.
 | Language | TypeScript throughout — Hono (Node 22), Vite + React + React Flow; contracts as Zod schemas shared by server and UI | The spike showed the shared contracts (stream events, hook payload, map schema) are the delicate part; one definition means drift fails the compile instead of failing silently. Go was weighed: its single binary and process handling are real strengths, but they pay off at a scale Flightdeck won't reach | **decided 2026-10-10** |
 | Storage | SQLite (WAL) via Drizzle; run logs as files | Flightdeck must keep working when Docker/Postgres is down — that's when you'd open it. One user, one process. Switch to Postgres only if multi-user or vector search is needed | working assumption |
 | Port | `127.0.0.1:8100` (free as of 2026-10-10) | — | proposed |
+| **Runs on (now)** | **Locally on Hayk's Mac as Flightdeck.app**, loopback only; updated with `scripts/mac/install.sh` (see README) | Replaces the box, tunnel, SSO gateway and systemd rows above, which are kept as history. The app runs its own copy of the code, so chats editing this repo can't change the running server | **decided 2026-10-11** |
 
 ## 3. Architecture
 
@@ -335,9 +336,9 @@ read-only file viewing.
 **Phase 1c — maps ↔ chat. BUILT 2026-10-10.** A map pane beside each chat (toggle in the header). **Context:** click a node to attach it as a chip; on send, the server resolves each `{view, nodeId}` from the map file on disk and prefixes the prompt with the node's label, kind, summary and files (the UI can only point at nodes, never inject text); unknown nodes are rejected. Verified: with the Rules Engine attached, the agent went straight to `src/server/rules.ts`. **Live highlighting:** the latest run's reads (blue) and successful edits (amber) map back to the most specific nodes covering each file and show on their visible ancestors; refused or failed edits light nothing. Claude Code reports **symlink-resolved paths** (`~/dev` → `/data/mac-sync/dev` on the box), so projects carry a `realPath`. The Map screen's node panel adds **Discuss in a new chat**. Original intent: Selecting nodes as chat context; nodes lighting up as the agent
 reads/edits; post-run "what changed" marked on the map.
 
-**Then**, once Flightdeck has replaced the terminal for daily work: a
-`flightdeck.yml` playbook and `make flightdeck` in vlolabsdev-local (reading source from this
-path, like routing/alchemira), the tunnel route and the SSO gateway entry.
+**Then** (superseded 2026-10-11: Flightdeck runs locally as Flightdeck.app, see §2 and README): a
+`flightdeck.yml` playbook and `make flightdeck` in vlolabsdev-local, the tunnel route and the SSO
+gateway entry.
 
 ## 9. Not in Phase 1
 Git panel (commits/pushes happen in chat, as in the terminal today) · terminal · run/debug ·
