@@ -3,18 +3,21 @@
   --accent: #2b59c3; --accent-text: #ffffff; --good: #2f7d4f; --bad: #b3261e; --warn: #9a6700;
   --user: #eef2fb; --code: #f1f0ec; --card: #fff8e6; --card-line: #e8d29a;
   --mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+  --syn-keyword: #8a3ffc; --syn-string: #2f7d4f; --syn-number: #b35c00; --syn-title: #2b59c3; --syn-type: #0e7490; --syn-attr: #6b4f1d; --syn-meta: #6b6b66;
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
     --bg: #161615; --panel: #1f1f1d; --text: #e9e8e4; --muted: #9a9993; --line: #33322f;
     --accent: #7ea2ff; --accent-text: #10131b; --good: #6cc48f; --bad: #ff8a80; --warn: #e3b341;
     --user: #22283a; --code: #2a2a27; --card: #2d2715; --card-line: #6b5a26;
+    --syn-keyword: #c79bff; --syn-string: #8fd19e; --syn-number: #f0a868; --syn-title: #8fb2ff; --syn-type: #6fd3e3; --syn-attr: #e6c68a; --syn-meta: #a9a8a2;
   }
 }
 :root[data-theme="dark"] {
   --bg: #161615; --panel: #1f1f1d; --text: #e9e8e4; --muted: #9a9993; --line: #33322f;
   --accent: #7ea2ff; --accent-text: #10131b; --good: #6cc48f; --bad: #ff8a80; --warn: #e3b341;
   --user: #22283a; --code: #2a2a27; --card: #2d2715; --card-line: #6b5a26;
+  --syn-keyword: #c79bff; --syn-string: #8fd19e; --syn-number: #f0a868; --syn-title: #8fb2ff; --syn-type: #6fd3e3; --syn-attr: #e6c68a; --syn-meta: #a9a8a2;
 }
 
 * { box-sizing: border-box; }
@@ -221,16 +224,46 @@ table.fields td { padding: 2px 8px 2px 0; vertical-align: top; }
   display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;
 }
 
-.viewer-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,.35); display: grid; place-items: center; z-index: 50; padding: 16px; }
+.viewer-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,.45); display: grid; place-items: center; z-index: 50; padding: 16px; }
 .viewer {
-  background: var(--panel); border-radius: 10px; width: min(1000px, 100%); height: min(85vh, 100%);
-  display: flex; flex-direction: column; overflow: hidden; border: 1px solid var(--line);
+  background: var(--panel); border-radius: 10px; width: min(1100px, 100%); height: min(88vh, 100%);
+  display: flex; flex-direction: column; overflow: hidden; border: 1px solid var(--line); box-shadow: 0 12px 40px rgba(0,0,0,.35);
 }
-.viewer-head { display: flex; justify-content: space-between; align-items: center; padding: 8px 12px; border-bottom: 1px solid var(--line); gap: 8px; }
-.viewer-body { flex: 1; overflow: auto; padding: 8px 12px; }
-pre.code { margin: 0; background: none; padding: 0; white-space: pre; word-break: normal; }
-.code-line { display: flex; }
-.code-line .ln { color: var(--muted); width: 4em; flex: none; text-align: right; padding-right: 12px; user-select: none; }
+.viewer-head { display: flex; justify-content: space-between; align-items: center; padding: 8px 12px; border-bottom: 1px solid var(--line); gap: 12px; }
+.viewer-crumbs { font-size: 13px; min-width: 0; overflow-x: auto; white-space: nowrap; }
+.viewer-crumbs button.link { display: inline; padding: 0; }
+.viewer-crumbs .sep { color: var(--muted); padding: 0 3px; }
+.viewer-meta { display: flex; align-items: center; gap: 10px; flex: none; font-size: 12.5px; }
+.viewer-places { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 6px 12px; border-bottom: 1px solid var(--line); font-size: 12.5px; }
+/* Map-node chips (shared with the chat's context chips): clickable here. */
+.viewer-places .chip { cursor: pointer; }
+.viewer-places .chip:hover { border-color: var(--accent); }
+.viewer-body { flex: 1; overflow: auto; --code-lh: 20px; }
+.viewer-body > .muted, .viewer-body > .error { padding: 12px; }
+.dir { display: flex; flex-direction: column; padding: 6px; }
+.dir-entry { text-align: left; background: none; color: var(--text); border: 0; border-radius: 4px; padding: 4px 8px; font-size: 13px; }
+.dir-entry:hover { background: var(--code); }
+.dir-entry.is-dir { color: var(--accent); }
+/* Code: gutter and text are separate columns with the same line height, so numbers stay aligned
+   and aren't copied with the code. */
+.code-grid { position: relative; display: grid; grid-template-columns: auto 1fr; min-width: max-content; }
+.code-gutter, .code-text { margin: 0; padding: 10px 0; font-family: var(--mono); font-size: 13px; line-height: var(--code-lh); tab-size: 4; background: none; white-space: pre; }
+.code-gutter { position: sticky; left: 0; z-index: 1; padding: 10px 12px 10px 16px; text-align: right; color: var(--muted); background: var(--panel); border-right: 1px solid var(--line); user-select: none; }
+.code-text { padding-left: 14px; padding-right: 24px; }
+.code-text code { font: inherit; background: none; padding: 0; }
+.code-mark { position: absolute; left: 0; right: 0; margin-top: 10px; height: var(--code-lh); background: color-mix(in srgb, var(--warn) 18%, transparent); pointer-events: none; }
+.truncated { padding: 8px 16px; }
+/* Syntax colours: muted, from the theme's own palette. */
+.hljs-comment, .hljs-quote { color: var(--muted); font-style: italic; }
+.hljs-keyword, .hljs-selector-tag, .hljs-built_in, .hljs-meta .hljs-keyword { color: var(--syn-keyword); }
+.hljs-string, .hljs-regexp, .hljs-addition, .hljs-template-tag { color: var(--syn-string); }
+.hljs-number, .hljs-literal, .hljs-symbol, .hljs-bullet { color: var(--syn-number); }
+.hljs-title, .hljs-title.function_, .hljs-section { color: var(--syn-title); }
+.hljs-type, .hljs-title.class_, .hljs-class .hljs-title { color: var(--syn-type); }
+.hljs-attr, .hljs-attribute, .hljs-property, .hljs-variable, .hljs-template-variable, .hljs-params { color: var(--syn-attr); }
+.hljs-meta, .hljs-tag, .hljs-name { color: var(--syn-meta); }
+.hljs-deletion { color: var(--bad); }
+.hljs-emphasis { font-style: italic; } .hljs-strong { font-weight: 600; }
 
 .chat-split { display: flex; height: 100%; min-width: 0; }
 .chat-split > .chat { flex: 1; min-width: 0; }

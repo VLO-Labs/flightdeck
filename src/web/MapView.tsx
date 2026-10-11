@@ -3,8 +3,8 @@
 import { useEffect, useMemo, useState } from 'react';
 import { MAP_VIEWS, type MapResponse, type MapViewId, type Project } from '../shared/contracts.ts';
 import { api } from './api.ts';
-import { FileViewer } from './FileViewer.tsx';
-import { Crumbs, MapCanvas, liftEdges } from './MapCanvas.tsx';
+import { FileViewer, type MapPlace } from './FileViewer.tsx';
+import { Crumbs, MapCanvas, liftEdges, nodesForFile } from './MapCanvas.tsx';
 
 // The details panel's width; it floats over the canvas, which pans selected cards out from under it.
 const PANEL_W = 340;
@@ -56,6 +56,23 @@ export function MapView({ project, onAskInChat }: { project: Project; onAskInCha
     };
   }, [map, sel, path, byId]);
   const goTo = (id: string) => { setSelected(id); setFocus(f => ({ id, seq: (f?.seq ?? 0) + 1 })); };
+
+  // Where the open file sits on the map, and a way back to it: drill to the node's level and select it.
+  const ancestors = (id: string) => {
+    const out: string[] = [];
+    for (let p = byId.get(id)?.parent ?? null; p; p = byId.get(p)?.parent ?? null) out.unshift(p);
+    return out;
+  };
+  const places: MapPlace[] = useMemo(() => {
+    if (!map || file === null || file === '' || file.endsWith('/')) return [];
+    return nodesForFile(map, file).map(id => ({ id, trail: [...ancestors(id), id].map(a => byId.get(a)?.label ?? a).join(' › ') }));
+  }, [map, file, byId]);
+  const showOnMap = (id: string) => {
+    setFile(null);
+    setPath(ancestors(id));
+    setSelected(id);
+    setFocus(f => ({ id, seq: (f?.seq ?? 0) + 1 }));
+  };
 
   const generate = async () => {
     setError('');
@@ -164,7 +181,9 @@ export function MapView({ project, onAskInChat }: { project: Project; onAskInCha
         )}
       </div>
 
-      {file !== null && <FileViewer project={project} path={file} onOpen={setFile} onClose={() => setFile(null)} />}
+      {file !== null && (
+        <FileViewer project={project} path={file} places={places} onOpen={setFile} onClose={() => setFile(null)} onShowOnMap={showOnMap} />
+      )}
     </div>
   );
 }
