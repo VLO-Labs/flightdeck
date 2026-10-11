@@ -57,7 +57,10 @@ if ! curl -sf "\$URL/health" >/dev/null; then
   disown
   for _ in \$(seq 1 50); do curl -sf "\$URL/health" >/dev/null && break; sleep 0.2; done
 fi
-open "\$URL"
+# Without the port when scripts/mac/port80.sh has set up forwarding.
+OPEN="\$URL"
+curl -sf -m 1 "http://$HOST_NAME/health" >/dev/null && OPEN="http://$HOST_NAME"
+open "\$OPEN"
 LAUNCH
 chmod +x "$APP_BUNDLE/Contents/MacOS/Flightdeck"
 
