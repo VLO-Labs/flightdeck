@@ -31,6 +31,15 @@ const READ_ONLY: { cmd: RegExp; unless?: RegExp }[] = [
   { cmd: /^rg\b/, unless: /--pre\b/ }, // --pre runs a program on each file
   { cmd: /^find\b/, unless: /\s-(exec|execdir|delete|ok|okdir|fprint|fprintf|fls)\b/ },
   { cmd: /^(echo|printf)\b/ }, // writes only through a redirect, which is checked separately
+  { cmd: /^(cd|sleep|true|basename|dirname|realpath|readlink|id|hostname|cut|tr|jq|diff|cmp|nl|less|column)\b/ },
+  { cmd: /^sort\b/, unless: /\s(-o|--output)\b/ },
+  { cmd: /^(ps|pgrep|lsof|top -l)\b/ },
+  // A GET that prints: not one that writes a file, sends data or uses another method.
+  { cmd: /^curl\b/, unless: /\s(-[a-zA-Z]*[oODdFTXK]|--(output|remote-name|dump-header|data\S*|form|upload-file|request|config|json))\b/ },
+  { cmd: /^git (config (--get|--list|-l)|stash list|tag( -l| --list)?$|reflog( show\b.*)?$)/ },
+  { cmd: /^(npm (ls|list|view|outdated)|composer (show|outdated|validate)|php artisan (route:list|about))\b/ },
+  // Asking a tool its version.
+  { cmd: /^[\w.-]+ (-v|-V|--version|version)$/ },
 ];
 
 export function isReadOnlyCommand(part: string): boolean {

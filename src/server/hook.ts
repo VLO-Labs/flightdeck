@@ -1,6 +1,6 @@
 // The PreToolUse hook: Claude Code calls this before every tool use and waits for the answer.
-// Order of decisions: Discuss-mode edit refusal → edit lock → the project's rules (in Discuss, a shell
-// command only skips the card when every part is read-only) → (Ask) an approval card you click.
+// Order of decisions: Discuss-mode refusal (edits, and shell commands not known read-only) → edit
+// lock → the project's rules → (Ask) an approval card you click.
 import { and, eq } from 'drizzle-orm';
 import type { Decision, FeedItem, HookPayload } from '../shared/contracts.ts';
 import { config } from './config.ts';
@@ -62,9 +62,13 @@ export async function decide(p: HookPayload): Promise<Answer> {
 
   const isEdit = EDIT_TOOLS.has(p.tool_name);
 
-  // 0. Discuss mode never edits, whatever the rules say.
-  if (isEdit && run.mode === 'discuss') {
-    const reason = 'This chat is in Discuss mode, so file edits are refused. Propose the change instead; the user switches the chat to Build to implement it.';
+  // 0. Discuss mode never changes anything, whatever the rules say or the user would click: no file
+  // edits, and no shell command unless every part of it is known read-only.
+  const changingShell = p.tool_name === 'Bash' && !isReadOnlyShell(String(p.tool_input.command ?? ''));
+  if (run.mode === 'discuss' && (isEdit || changingShell)) {
+    const reason = isEdit
+      ? 'This chat is in Discuss mode, so file edits are refused. Propose the change instead; the user switches the chat to Build to implement it.'
+      : 'This chat is in Discuss mode, so only read-only shell commands run (ls, cat, grep, find, git status/diff/log, ps, curl without writes, …). Use one of those, or propose the command; the user switches the chat to Build to run it.';
     const row = record(run.runId, p, 'denied', 'mode', undefined, reason);
     feed.append(run.chatId, { ...base, approvalId: row.id, state: 'denied', decidedBy: 'mode', reason });
     return { decision: 'deny', reason };
@@ -82,15 +86,7 @@ export async function decide(p: HookPayload): Promise<Answer> {
 
   // 2. The project's rules.
   const projectRules = db.select().from(rules).where(eq(rules.projectId, project.id)).all();
-  let verdict = evaluate(projectRules, p.tool_name, p.tool_input, project.path);
-  let note: string | undefined;
-
-  // Discuss mode is read-only in fact, not just by instruction: an allow rule waves a shell command
-  // through only when every command in it is known not to change anything. Otherwise you decide.
-  if (run.mode === 'discuss' && p.tool_name === 'Bash' && verdict.bucket === 'allow' && !isReadOnlyShell(String(p.tool_input.command ?? ''))) {
-    verdict = { bucket: 'ask' };
-    note = 'Discuss mode: this command may change files, so it asks even though a rule allows it.';
-  }
+  const verdict = evaluate(projectRules, p.tool_name, p.tool_input, project.path);
 
   if (verdict.bucket === 'allow') {
     record(run.runId, p, 'allowed', 'rule', verdict.rule?.pattern);
@@ -106,7 +102,7 @@ export async function decide(p: HookPayload): Promise<Answer> {
 
   // 3. Ask: show a card and hold Claude Code until you click (or the card times out).
   const row = record(run.runId, p, 'pending');
-  const item: ApprovalItem = { ...base, approvalId: row.id, suggestedPattern: suggestPattern(p.tool_name, p.tool_input), note };
+  const item: ApprovalItem = { ...base, approvalId: row.id, suggestedPattern: suggestPattern(p.tool_name, p.tool_input) };
   feed.append(run.chatId, item);
 
   const answer = await new Promise<Answer>(resolve => {
