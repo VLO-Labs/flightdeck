@@ -8,8 +8,9 @@ import {
 import '@xyflow/react/dist/style.css';
 import ELK from 'elkjs/lib/elk.bundled.js';
 import type { ElkExtendedEdge } from 'elkjs/lib/elk-api.js';
-import type { MapNode, MapViewId, StoredMap } from '../shared/contracts.ts';
+import type { CheckResult, MapNode, MapViewId, StoredMap } from '../shared/contracts.ts';
 import { liftEdges, type Heat, type LiftedEdge } from './graph.ts';
+import type { PlannedNode, PlanStatus } from '../shared/plan.ts';
 
 export { liftEdges, nodesForFile, type Heat, type LiftedEdge } from './graph.ts';
 
@@ -39,13 +40,19 @@ const CATEGORY: Record<string, number> = {
   external: 3,
 };
 
+// On a plan: what the plan does to this card; `inside` = it changes something within; `same` = untouched.
+type PlanMark = PlanStatus | 'inside' | 'same';
+const PLAN_TAG: Record<PlanMark, string> = { added: 'new', changed: 'changed', removed: 'removed', inside: 'changes inside', same: '' };
+// After a check of what was built (PLAN.md §10).
+export const CHECK_TAG: Record<CheckResult, string> = { verified: '✓ verified', missing: '✗ missing', review: '? needs review', unexpected: '! unexpected' };
+
 type CardData = {
   node: MapNode; stale: boolean; children: string[]; selected: boolean; inContext: boolean;
-  heat?: Heat; dim: boolean; height: number;
+  heat?: Heat; dim: boolean; height: number; plan?: PlanMark; check?: CheckResult;
 };
 
 function NodeCard({ data }: NodeProps<Node<CardData>>) {
-  const { node, stale, children, selected, inContext, heat, dim, height } = data;
+  const { node, stale, children, selected, inContext, heat, dim, height, plan, check } = data;
   // Name what's inside instead of counting it ("Routes, Billing +5"), within the card's width.
   let inside = '';
   if (children.length) {
@@ -58,7 +65,7 @@ function NodeCard({ data }: NodeProps<Node<CardData>>) {
   }
   return (
     <div
-      className={`map-node kind-${node.kind} ${stale ? 'stale' : ''} ${selected ? 'selected' : ''} ${inContext ? 'in-context' : ''} ${heat ? `heat-${heat}` : ''} ${dim ? 'dim' : ''}`}
+      className={`map-node kind-${node.kind} ${stale ? 'stale' : ''} ${selected ? 'selected' : ''} ${inContext ? 'in-context' : ''} ${heat ? `heat-${heat}` : ''} ${dim ? 'dim' : ''} ${plan ? `plan-${plan}` : ''}`}
       style={{ width: W, height }}
       title={node.label}
     >
@@ -68,7 +75,10 @@ function NodeCard({ data }: NodeProps<Node<CardData>>) {
         <span>{node.kind}</span>
         {heat === 'edit' && <span className="heat-tag edit">edited</span>}
         {heat === 'read' && <span className="heat-tag read">read</span>}
-        {stale && !heat && <span className="stale-tag" title="Files behind this changed since the map was made; it may need a refresh">may be outdated</span>}
+        {check
+          ? <span className={`check-tag ${check}`}>{CHECK_TAG[check]}</span>
+          : plan && plan !== 'same' && !heat && <span className={`plan-tag ${plan}`}>{PLAN_TAG[plan]}</span>}
+        {stale && !heat && !plan && <span className="stale-tag" title="Files behind this changed since the map was made; it may need a refresh">may be outdated</span>}
       </div>
       <div className="map-node-label">{node.label}</div>
       {node.summary && <div className="map-node-summary">{node.summary}</div>}
@@ -98,7 +108,7 @@ const nodeTypes = { card: NodeCard };
 
 type Point = { x: number; y: number };
 type Role = 'out' | 'in' | 'both' | 'hover' | 'dim' | 'plain';
-type RouteData = { points: Point[]; label?: string; labelAt?: Point; showLabel: boolean; role: Role };
+type RouteData = { points: Point[]; label?: string; labelAt?: Point; showLabel: boolean; role: Role; plan?: PlanStatus };
 
 function RouteEdge({ id, data, markerStart, markerEnd }: EdgeProps<Edge<RouteData>>) {
   const pts = data?.points ?? [];
@@ -107,7 +117,7 @@ function RouteEdge({ id, data, markerStart, markerEnd }: EdgeProps<Edge<RouteDat
   const show = data!.showLabel && data!.label && data!.labelAt;
   return (
     <BaseEdge
-      id={id} path={path} markerStart={markerStart} markerEnd={markerEnd} className={`route route-${data!.role}`}
+      id={id} path={path} markerStart={markerStart} markerEnd={markerEnd} className={`route route-${data!.role}${data!.plan ? ` plan-${data!.plan}` : ''}`}
       interactionWidth={14}
       label={show ? data!.label : undefined} labelX={data!.labelAt?.x} labelY={data!.labelAt?.y}
       labelBgPadding={[5, 3]} labelBgBorderRadius={4}
@@ -150,7 +160,7 @@ function InstanceRef({ into }: { into: { current: ReactFlowInstance<Node<CardDat
 const viewports = new Map<string, Viewport>();
 
 export function MapCanvas({
-  map, view, stale, path, onPath, selected, onSelect, inContext, heat, focus, remember, coveredRight = 0, minFitZoom = 0.65,
+  map, view, stale, path, onPath, selected, onSelect, inContext, heat, focus, remember, coveredRight = 0, minFitZoom = 0.65, plan = false, checks,
 }: {
   map: StoredMap;
   view: MapViewId;
@@ -165,6 +175,8 @@ export function MapCanvas({
   remember?: boolean; // keep each level's pan/zoom for when it's shown again (the Map screen)
   coveredRight?: number; // px of the canvas's right side covered by a panel while something is selected
   minFitZoom?: number; // the initial fit never zooms out further than this (text stays readable)
+  plan?: boolean; // the map is a plan laid over the current map: mark what it adds, changes, removes
+  checks?: Map<string, CheckResult>; // by node id: how each planned part turned out
 }) {
   const level = path.at(-1) ?? null;
   const levelKey = `${view}:${level ?? ''}`;
@@ -301,6 +313,21 @@ export function MapCanvas({
     return out;
   }, [heat, map, level]);
 
+  // On a plan, each card's mark: its own status, or that something inside it changes.
+  const planMarks = useMemo(() => {
+    const out = new Map<string, PlanMark>();
+    if (!plan) return out;
+    const byId = new Map(map.nodes.map(n => [n.id, n as PlannedNode]));
+    for (const n of byId.values()) {
+      if (!n.status) continue;
+      out.set(n.id, n.status);
+      for (let p = n.parent ? byId.get(n.parent) : undefined; p; p = p.parent ? byId.get(p.parent) : undefined) {
+        if (!out.has(p.id)) out.set(p.id, 'inside');
+      }
+    }
+    return out;
+  }, [map, plan]);
+
   if (!layout || layout.key !== layoutKey) return null;
 
   // Selection: the selected card's edges are drawn by direction (uses / used by), its neighbours
@@ -328,6 +355,8 @@ export function MapCanvas({
       data: {
         node: n, stale: stale.has(n.id), children: childLabels.get(n.id) ?? [], selected: n.id === sel,
         inContext: inContext?.has(n.id) ?? false, heat: visibleHeat.get(n.id), dim: !related, height: b.height,
+        plan: plan ? planMarks.get(n.id) ?? 'same' : undefined,
+        check: checks?.get(n.id),
       },
     };
   });
@@ -339,14 +368,15 @@ export function MapCanvas({
     let role: Role = 'plain';
     if (id === hoverEdge) role = 'hover';
     else if (sel) role = e.twoWay && (e.from === sel || e.to === sel) ? 'both' : e.from === sel ? 'out' : e.to === sel ? 'in' : 'dim';
-    const color = role === 'out' || role === 'both' ? 'var(--accent)' : role === 'in' ? 'var(--good)' : role === 'hover' ? 'var(--text)' : role === 'dim' ? 'var(--line)' : 'var(--muted)';
+    const planColor = e.status === 'added' ? 'var(--good)' : e.status === 'removed' ? 'var(--bad)' : e.status === 'changed' ? 'var(--plan-changed)' : undefined;
+    const color = role === 'out' || role === 'both' ? 'var(--accent)' : role === 'in' ? 'var(--good)' : role === 'hover' ? 'var(--text)' : role === 'dim' ? 'var(--line)' : planColor ?? 'var(--muted)';
     const label = e.labels.length > 1 ? `${e.labels[0]} +${e.labels.length - 1}` : e.labels[0];
     const showLabel = role === 'hover' || role === 'out' || role === 'in' || role === 'both' || (!sel && layout.lifted.length <= ALWAYS_LABEL);
     return {
       id, source: e.from, target: e.to, type: 'route',
       markerEnd: arrow(color), markerStart: e.twoWay ? arrow(color) : undefined,
       zIndex: role === 'dim' || role === 'plain' ? 0 : 1,
-      data: { ...r, label, showLabel, role },
+      data: { ...r, label, showLabel, role, plan: e.status },
       animated: visibleHeat.has(e.from) && visibleHeat.has(e.to),
     };
   });

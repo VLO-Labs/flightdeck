@@ -42,10 +42,46 @@ export const runs = sqliteTable('runs', {
   chatId: integer('chat_id').notNull(),
   status: text('status', { enum: ['running', 'finished', 'failed', 'stopped'] }).notNull(),
   detail: text('detail'),
+  planVersionId: integer('plan_version_id'), // the approved plan version a Build turn implemented
   headBefore: text('head_before'),
   headAfter: text('head_after'),
   startedAt: text('started_at').notNull(),
   endedAt: text('ended_at'),
+});
+
+// Plans (PLAN.md §10): one per chat; its versions are insert-only (a trigger below refuses edits).
+export const plans = sqliteTable('plans', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  chatId: integer('chat_id').notNull().unique(),
+  projectId: integer('project_id').notNull(),
+  status: text('status', { enum: ['draft', 'approved', 'done', 'dropped'] }).notNull(),
+  approvedVersionId: integer('approved_version_id'), // what Build turns implement; changes only on Approve
+  createdAt: text('created_at').notNull(),
+});
+
+export const planVersions = sqliteTable('plan_versions', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  planId: integer('plan_id').notNull(),
+  version: integer('version').notNull(),
+  source: text('source', { enum: ['agent', 'revalidated'] }).notNull(),
+  body: text('body').notNull(), // PlanBody JSON
+  baseline: text('baseline').notNull(), // PlanBaseline JSON
+  warnings: text('warnings').notNull(), // JSON string[]
+  // The maps it was made against, as they were (JSON, view → StoredMap | null): what a check compares
+  // the regenerated maps with — the files on disk may have been regenerated since.
+  maps: text('maps'),
+  createdAt: text('created_at').notNull(),
+  approvedAt: text('approved_at'), // set once, never cleared
+});
+
+// Checks of what was built against an approved version (PLAN.md §10). result: PlanCheck fields as JSON.
+export const planChecks = sqliteTable('plan_checks', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  planId: integer('plan_id').notNull(),
+  versionId: integer('version_id').notNull(),
+  status: text('status', { enum: ['running', 'done', 'failed'] }).notNull(),
+  result: text('result').notNull(),
+  createdAt: text('created_at').notNull(),
 });
 
 // The audit trail: every tool call the hook decided, and who/what decided it.
@@ -85,6 +121,24 @@ sqlite.exec(`
     id INTEGER PRIMARY KEY AUTOINCREMENT, run_id INTEGER NOT NULL, tool_name TEXT NOT NULL,
     tool_input TEXT NOT NULL, decision TEXT NOT NULL, decided_by TEXT, rule TEXT, reason TEXT,
     created_at TEXT NOT NULL, decided_at TEXT);
+  CREATE TABLE IF NOT EXISTS plans (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, chat_id INTEGER NOT NULL UNIQUE, project_id INTEGER NOT NULL,
+    status TEXT NOT NULL, approved_version_id INTEGER, created_at TEXT NOT NULL);
+  CREATE TABLE IF NOT EXISTS plan_versions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, plan_id INTEGER NOT NULL, version INTEGER NOT NULL,
+    source TEXT NOT NULL, body TEXT NOT NULL, baseline TEXT NOT NULL, warnings TEXT NOT NULL,
+    created_at TEXT NOT NULL, approved_at TEXT, UNIQUE (plan_id, version));
+  -- An approved plan can't be changed after the fact: a version's content is fixed once saved, and
+  -- its approval, once given, stays. New thinking is a new version.
+  CREATE TABLE IF NOT EXISTS plan_checks (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, plan_id INTEGER NOT NULL, version_id INTEGER NOT NULL,
+    status TEXT NOT NULL, result TEXT NOT NULL, created_at TEXT NOT NULL);
+  CREATE TRIGGER IF NOT EXISTS plan_versions_approval_once
+    BEFORE UPDATE OF approved_at ON plan_versions WHEN OLD.approved_at IS NOT NULL
+    BEGIN SELECT RAISE(ABORT, 'a plan version is approved once'); END;
+  CREATE TRIGGER IF NOT EXISTS plan_versions_no_delete
+    BEFORE DELETE ON plan_versions
+    BEGIN SELECT RAISE(ABORT, 'plan versions are kept'); END;
 `);
 
 // Columns added after the first build (2026-10-10): bring an older database up to date.
@@ -99,6 +153,15 @@ addColumn('chats', `mode TEXT NOT NULL DEFAULT 'discuss'`);
 addColumn('chats', 'discuss_model TEXT');
 addColumn('chats', 'build_model TEXT');
 addColumn('projects', 'maps_repo TEXT');
+addColumn('runs', 'plan_version_id INTEGER');
+addColumn('plan_versions', 'maps TEXT');
+// After the columns exist, so the trigger covers all of them (recreated in case an older one lacks one).
+sqlite.exec(`
+  DROP TRIGGER IF EXISTS plan_versions_immutable;
+  CREATE TRIGGER plan_versions_immutable
+    BEFORE UPDATE OF plan_id, version, source, body, baseline, warnings, maps, created_at ON plan_versions
+    BEGIN SELECT RAISE(ABORT, 'plan versions are immutable'); END;
+`);
 if (columns('chats').has('model')) sqlite.exec('ALTER TABLE chats DROP COLUMN model'); // superseded by per-mode models
 
 // A run left 'running' by a crash or restart can never finish; close it out on boot.

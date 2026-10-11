@@ -182,7 +182,7 @@ function scratchIndex(repo: string): { env: NodeJS.ProcessEnv; done: () => void 
   };
 }
 
-function git(cwd: string, args: string[]): string {
+export function git(cwd: string, args: string[]): string {
   const idx = scratchIndex(cwd);
   try {
     return execFileSync('git', args, { cwd, encoding: 'utf8', maxBuffer: 64 << 20, env: idx.env });
@@ -223,7 +223,7 @@ export function repoFiles(path: string): string[] {
   return files;
 }
 
-function head(path: string): string | null {
+export function head(path: string): string | null {
   try { return git(path, ['rev-parse', 'HEAD']).trim(); } catch { return null; }
 }
 
@@ -329,7 +329,8 @@ function describe(name: string, input: Record<string, unknown>): string {
   return name;
 }
 
-export function startGeneration(project: { id: number; path: string; discussModel: string; mapsRepo: string | null }, view: MapViewId):
+// hints: extra prompt text (a plan check's id alignment); the generator still maps only what exists.
+export function startGeneration(project: { id: number; path: string; discussModel: string; mapsRepo: string | null }, view: MapViewId, hints = ''):
   { ok: true } | { ok: false; error: string } {
   if (jobs.get(project.id)?.status === 'running') return { ok: false, error: 'a map is already being generated for this project' };
 
@@ -347,7 +348,7 @@ export function startGeneration(project: { id: number; path: string; discussMode
     'file paths in the map are relative to this folder (e.g. `' + repos[0] + '/…`).';
 
   const args = [
-    '-p', `${COMMON}\n\n${VIEW_PROMPTS[view]}${layout}`,
+    '-p', `${COMMON}\n\n${VIEW_PROMPTS[view]}${layout}${hints ? `\n\n${hints}` : ''}`,
     '--model', project.discussModel,
     '--output-format', 'stream-json', '--verbose',
     '--json-schema', JSON.stringify(mapJsonSchema()),

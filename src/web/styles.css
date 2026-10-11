@@ -3,21 +3,21 @@
   --accent: #2b59c3; --accent-text: #ffffff; --good: #2f7d4f; --bad: #b3261e; --warn: #9a6700;
   --user: #eef2fb; --code: #f1f0ec; --card: #fff8e6; --card-line: #e8d29a;
   --mono: ui-monospace, SFMono-Regular, Menlo, monospace;
-  --syn-keyword: #8a3ffc; --syn-string: #2f7d4f; --syn-number: #b35c00; --syn-title: #2b59c3; --syn-type: #0e7490; --syn-attr: #6b4f1d; --syn-meta: #6b6b66;
+  --syn-keyword: #8a3ffc; --plan-changed: #8a3ffc; --syn-string: #2f7d4f; --syn-number: #b35c00; --syn-title: #2b59c3; --syn-type: #0e7490; --syn-attr: #6b4f1d; --syn-meta: #6b6b66;
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
     --bg: #161615; --panel: #1f1f1d; --text: #e9e8e4; --muted: #9a9993; --line: #33322f;
     --accent: #7ea2ff; --accent-text: #10131b; --good: #6cc48f; --bad: #ff8a80; --warn: #e3b341;
     --user: #22283a; --code: #2a2a27; --card: #2d2715; --card-line: #6b5a26;
-    --syn-keyword: #c79bff; --syn-string: #8fd19e; --syn-number: #f0a868; --syn-title: #8fb2ff; --syn-type: #6fd3e3; --syn-attr: #e6c68a; --syn-meta: #a9a8a2;
+    --syn-keyword: #c79bff; --plan-changed: #c79bff; --syn-string: #8fd19e; --syn-number: #f0a868; --syn-title: #8fb2ff; --syn-type: #6fd3e3; --syn-attr: #e6c68a; --syn-meta: #a9a8a2;
   }
 }
 :root[data-theme="dark"] {
   --bg: #161615; --panel: #1f1f1d; --text: #e9e8e4; --muted: #9a9993; --line: #33322f;
   --accent: #7ea2ff; --accent-text: #10131b; --good: #6cc48f; --bad: #ff8a80; --warn: #e3b341;
   --user: #22283a; --code: #2a2a27; --card: #2d2715; --card-line: #6b5a26;
-  --syn-keyword: #c79bff; --syn-string: #8fd19e; --syn-number: #f0a868; --syn-title: #8fb2ff; --syn-type: #6fd3e3; --syn-attr: #e6c68a; --syn-meta: #a9a8a2;
+  --syn-keyword: #c79bff; --plan-changed: #c79bff; --syn-string: #8fd19e; --syn-number: #f0a868; --syn-title: #8fb2ff; --syn-type: #6fd3e3; --syn-attr: #e6c68a; --syn-meta: #a9a8a2;
 }
 
 * { box-sizing: border-box; }
@@ -401,3 +401,46 @@ button.danger { background: var(--bad); color: #fff; }
   .rule { flex-wrap: wrap; }
   .rule code { min-width: 0; }
 }
+
+/* Plans (PLAN.md §10): one set of markers for boxes and arrows — added (green, dashed), changed
+   (purple), removed (red, faded, struck through). Unchanged parts step back but stay readable. */
+.plan-tag { font-size: 12px; text-transform: none; letter-spacing: 0; white-space: nowrap; border-radius: 4px; padding: 0 4px; }
+.plan-tag.added { color: var(--good); }
+.plan-tag.changed, .plan-tag.inside { color: var(--plan-changed); }
+.plan-tag.removed { color: var(--bad); }
+/* Outlines, not borders: the card keeps its kind stripe, and its size. */
+.map-node.plan-added { outline: 2px dashed var(--good); outline-offset: 2px; }
+.map-node.plan-changed { border-color: var(--plan-changed); box-shadow: 0 0 0 2px color-mix(in srgb, var(--plan-changed) 35%, transparent); }
+.map-node.plan-removed { outline: 2px dashed var(--bad); outline-offset: 2px; opacity: .6; }
+.map-node.plan-removed .map-node-label { text-decoration: line-through; }
+.map-node.plan-inside { border-color: color-mix(in srgb, var(--plan-changed) 60%, var(--line)); }
+.map-node.plan-same { opacity: .5; }
+.map-node.plan-same:hover, .map-node.plan-same.selected, .map-node.plan-same.in-context { opacity: 1; }
+.react-flow__edge-path.route.plan-added { stroke: var(--good); stroke-width: 2; stroke-dasharray: 6 4; }
+.react-flow__edge-path.route.plan-removed { stroke: var(--bad); stroke-dasharray: 3 4; opacity: .7; }
+.react-flow__edge-path.route.plan-changed { stroke: var(--plan-changed); stroke-width: 2; }
+
+.plan-bar { padding: 6px 10px; border-bottom: 1px solid var(--line); background: var(--panel); font-size: 13px; display: flex; flex-direction: column; gap: 4px; }
+.plan-bar-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.plan-bar select { font-size: 12px; }
+.plan-title { font-weight: 600; }
+.plan-picked { font-size: 12.5px; }
+.plan-before { font-size: 12px; }
+.plan-details { max-height: 40vh; overflow-y: auto; font-size: 13px; }
+.plan-details p { margin: 4px 0; }
+.plan-details ol, .plan-details ul { margin: 2px 0 6px; padding-left: 20px; }
+.plan-h { font-weight: 600; margin-top: 6px; }
+
+.plan-card { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; padding: 8px 12px; border: 1px solid var(--line); border-left: 3px solid var(--plan-changed); border-radius: 6px; background: var(--panel); }
+.plan-card-v { font-weight: 600; color: var(--plan-changed); }
+.plan-card-title { font-weight: 600; }
+
+/* Check results (PLAN.md §10): verified needs code evidence; review = partial or diagram-only. */
+.check-tag { font-size: 12px; white-space: nowrap; text-transform: none; letter-spacing: 0; margin-right: 6px; }
+.check-tag.verified { color: var(--good); }
+.check-tag.missing { color: var(--bad); }
+.check-tag.review { color: var(--warn); }
+.check-tag.unexpected { color: var(--plan-changed); }
+.check-summary { font-size: 12.5px; }
+.check-items { margin: 4px 0; padding-left: 18px; max-height: 30vh; overflow-y: auto; }
+.check-items ul { padding-left: 16px; margin: 0 0 4px; }

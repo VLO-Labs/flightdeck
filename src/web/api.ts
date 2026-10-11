@@ -1,6 +1,6 @@
 // Thin typed client for the Flightdeck API. Responses are parsed with the shared contracts.
 import { z } from 'zod';
-import { BrowseResponse, Chat, FileResponse, MapResponse, ProcessGroup, Project, Rule, type Decision, type MapViewId, type Mode, type NewRule } from '../shared/contracts.ts';
+import { BrowseResponse, Chat, FileResponse, MapResponse, PlanResponse, ProcessGroup, Project, Rule, type Decision, type MapViewId, type Mode, type NewRule } from '../shared/contracts.ts';
 
 async function call<T>(schema: z.ZodType<T>, method: string, url: string, body?: unknown): Promise<T> {
   const res = await fetch(url, {
@@ -34,6 +34,12 @@ export const api = {
   generateMap: (projectId: number, view: MapViewId) => call(Ok, 'POST', `/api/projects/${projectId}/maps/${view}/generate`),
   stopMap: (projectId: number) => call(Ok, 'POST', `/api/projects/${projectId}/maps/stop`),
   file: (projectId: number, path: string) => call(FileResponse, 'GET', `/api/projects/${projectId}/file?path=${encodeURIComponent(path)}`),
+  plan: (chatId: number, versionId?: number) =>
+    call(PlanResponse, 'GET', `/api/chats/${chatId}/plan${versionId ? `?version=${versionId}` : ''}`),
+  approvePlan: (chatId: number, versionId: number) => call(PlanResponse, 'POST', `/api/chats/${chatId}/plan/approve`, { versionId }),
+  revalidatePlan: (chatId: number, versionId: number) => call(PlanResponse, 'POST', `/api/chats/${chatId}/plan/revalidate`, { versionId }),
+  checkPlan: (chatId: number) => call(PlanResponse, 'POST', `/api/chats/${chatId}/plan/check`),
+  dropPlan: (chatId: number) => call(PlanResponse, 'POST', `/api/chats/${chatId}/plan/drop`),
   processes: (projectId: number) => call(z.array(ProcessGroup), 'GET', `/api/projects/${projectId}/processes`),
   stopProcess: (projectId: number, pid: number) => call(Ok, 'POST', `/api/projects/${projectId}/processes/${pid}/stop`),
   rules: (projectId: number) => call(z.array(Rule), 'GET', `/api/projects/${projectId}/rules`),

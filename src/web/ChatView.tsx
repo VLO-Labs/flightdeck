@@ -3,7 +3,8 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import Markdown, { type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { FeedItem, MAP_VIEWS, MODELS, type Chat, type MapViewId, type ProcessGroup, type Project } from '../shared/contracts.ts';
+import { FeedItem, MAP_VIEWS, MODELS, type Chat, type CheckResult, type MapNode, type PlanCheck, type MapViewId, type PlanFreshness, type PlanResponse, type ProcessGroup, type Project, type StoredMap } from '../shared/contracts.ts';
+import { applyPlan, type PlannedNode } from '../shared/plan.ts';
 import { splitCommand } from '../shared/shell.ts';
 import { actState, derive, groupActivities, groupSummary, str, type Activity, type ActState, type Approval, type RateLimit } from './feedModel.ts';
 import { api } from './api.ts';
@@ -28,9 +29,11 @@ export function ChatView({ chat, project, onChanged, initialContext }: {
   const stick = useRef(scrollMemory.get(chat.id) == null);
   const restored = useRef(false);
   const [behind, setBehind] = useState(false);
+  const seenPlans = useRef<number | null>(null); // plan items seen so far; null until the replay is in
 
   useEffect(() => {
     setItems([]);
+    seenPlans.current = null;
     const es = new EventSource(`/api/chats/${chat.id}/feed`);
     let buffer: FeedItem[] = [];
     let replaying = true;
@@ -40,10 +43,13 @@ export function ChatView({ chat, project, onChanged, initialContext }: {
       // EventSource reconnects by itself; the server replays everything, so start clean.
       buffer = [];
       replaying = true;
+      seenPlans.current = null;
       setItems([]);
     };
     es.addEventListener('replayed', () => {
       replaying = false;
+      // What the history already holds isn't news: only plan items arriving after this move the map pane.
+      seenPlans.current = buffer.filter(isPlanItem).length;
       setItems(buffer);
     });
     es.onmessage = e => {
@@ -57,6 +63,19 @@ export function ChatView({ chat, project, onChanged, initialContext }: {
   }, [chat.id, onChanged]);
 
   const d = useMemo(() => derive(items, [project.realPath, project.path]), [items, project.realPath, project.path]);
+  // The map pane follows the plan: a new version arriving, or a plan card's "Show on map".
+  const [planSignal, setPlanSignal] = useState<PlanSignal>({ seq: 0 });
+  const planCount = useMemo(() => items.filter(isPlanItem).length, [items]);
+  useEffect(() => {
+    if (seenPlans.current === null) return; // still replaying
+    if (planCount > seenPlans.current) setPlanSignal(p => ({ seq: p.seq + 1 }));
+    seenPlans.current = planCount;
+  }, [planCount]);
+  const showPlan = (versionId: number) => {
+    setShowMap(true);
+    storageSet('fd.chatmap', '1');
+    setPlanSignal(p => ({ versionId, seq: p.seq + 1 }));
+  };
   const rows = useMemo(() => groupActivities(d.blocks, d.ended), [d]);
   const [openGroups, setOpenGroups] = useState<Set<string>>(new Set());
   // A file Claude read or edited, opened in the code viewer (at a line when one is known).
@@ -196,6 +215,31 @@ export function ChatView({ chat, project, onChanged, initialContext }: {
               return <ApprovalCard key={b.key} a={b.approval} rel={rel} mode={cur.mode} />;
             case 'activity':
               return <ActivityLine key={b.key} a={b} state={actState(b, d.ended)} rel={rel} onOpenFile={openFile} mode={cur.mode} />;
+            case 'check':
+              return (
+                <div key={b.key} className="plan-card">
+                  <span className="plan-card-v">Check of plan v{b.version}</span>
+                  {b.failed
+                    ? <span className="error">{b.failed}</span>
+                    : <span>{(['verified', 'missing', 'review', 'unexpected'] as const).filter(k => b.counts[k]).map(k => (
+                        <span key={k} className={`check-tag ${k}`}>{b.counts[k]} {CHECK_LABEL[k]}</span>
+                      ))}</span>}
+                  <button className="small" onClick={() => (b.versionId ? showPlan(b.versionId) : setShowMap(true))}>Show on map</button>
+                </div>
+              );
+            case 'plan':
+              return (
+                <div key={b.key} className="plan-card">
+                  <span className="plan-card-v">Plan v{b.version}</span>
+                  <span className="plan-card-title">{b.title}</span>
+                  <span className="muted">
+                    {b.counts.added > 0 && <span className="plan-tag added">+{b.counts.added}</span>}{' '}
+                    {b.counts.changed > 0 && <span className="plan-tag changed">~{b.counts.changed}</span>}{' '}
+                    {b.counts.removed > 0 && <span className="plan-tag removed">−{b.counts.removed}</span>}
+                  </span>
+                  <button className="small" onClick={() => showPlan(b.versionId)}>Show on map</button>
+                </div>
+              );
           }
         })}
         {d.partial && <div className="msg assistant partial"><Markdown remarkPlugins={[remarkGfm]} components={MD_COMPONENTS}>{d.partial}</Markdown></div>}
@@ -239,7 +283,7 @@ export function ChatView({ chat, project, onChanged, initialContext }: {
           : <button onClick={send} disabled={!draft.trim()}>Send</button>}
       </footer>
     </div>
-    {showMap && <ChatMapPane project={project} ctx={ctx} onToggle={toggleCtx} touched={d.touched} live={d.running} />}
+    {showMap && <ChatMapPane chat={chat} project={project} ctx={ctx} onToggle={toggleCtx} touched={d.touched} live={d.running} planSignal={planSignal} />}
     {viewing && (
       <FileViewer
         project={project} path={viewing.path} line={viewing.line}
@@ -250,32 +294,95 @@ export function ChatView({ chat, project, onChanged, initialContext }: {
   );
 }
 
+const isPlanItem = (i: FeedItem) => i.kind === 'plan' || i.kind === 'plan-dropped';
+
 // Where each chat was left, per chat id; absent = following the end. Lives for the page's lifetime.
 const scrollMemory = new Map<number, number>();
 
 const toggled = (s: Set<string>, k: string) => { const n = new Set(s); if (n.has(k)) n.delete(k); else n.add(k); return n; };
 
 // The map beside the chat: click a node to attach it to the next message; nodes light up as the
-// latest run reads (blue) or edits (amber) the files behind them.
-function ChatMapPane({ project, ctx, onToggle, touched, live }: {
-  project: Project; ctx: NodeRef[]; onToggle: (n: NodeRef) => void; touched: Map<string, Heat>; live: boolean;
+// latest run reads (blue) or edits (amber) the files behind them. With a plan, the Plan layer draws
+// it over the current map (PLAN.md §10); the map files themselves are never touched.
+export type PlanSignal = { versionId?: number; seq: number }; // "show this version" / "a new one arrived"
+
+function ChatMapPane({ chat, project, ctx, onToggle, touched, live, planSignal }: {
+  chat: Chat; project: Project; ctx: NodeRef[]; onToggle: (n: NodeRef) => void; touched: Map<string, Heat>; live: boolean;
+  planSignal: PlanSignal;
 }) {
   const [view, setView] = useState<MapViewId>('architecture');
   const { data } = useMap(project.id, view);
   const [path, setPath] = useState<string[]>([]);
-  useEffect(() => setPath([]), [view]);
+  const [plan, setPlan] = useState<PlanResponse | null>(null);
+  const [versionId, setVersionId] = useState<number | undefined>();
+  const [layer, setLayer] = useState<'current' | 'plan'>('current');
+  const [filter, setFilter] = useState<'all' | 'changes'>('all');
+  const [picked, setPicked] = useState<string | null>(null);
+  useEffect(() => { setPath([]); setPicked(null); }, [view, layer, filter]);
+
+  // A plan card's "Show on map" picks its version; a new version arriving shows the latest.
+  useEffect(() => {
+    setVersionId(planSignal.versionId);
+    if (planSignal.seq > 0) setLayer('plan');
+  }, [planSignal.seq]);
+  useEffect(() => {
+    let gone = false;
+    api.plan(chat.id, versionId).then(p => {
+      if (gone) return;
+      setPlan(p);
+      // The first look at a chat with a live plan shows it.
+      if (planSignal.seq === 0 && p.plan && (p.plan.status === 'draft' || p.plan.status === 'approved')) setLayer('plan');
+    }).catch(() => {});
+    return () => { gone = true; };
+  }, [chat.id, versionId, planSignal.seq]);
+  const checking = plan?.check?.status === 'running';
+  useEffect(() => {
+    if (!checking) return;
+    const t = setInterval(() => api.plan(chat.id, versionId).then(setPlan).catch(() => {}), 3000);
+    return () => clearInterval(t);
+  }, [checking, chat.id, versionId]);
 
   const map = data?.map ?? null;
-  const stale = useMemo(() => new Set(data?.staleNodeIds ?? []), [data]);
+  const version = plan?.version ?? null;
+  const onPlan = layer === 'plan' && version !== null;
+  // Results on the cards, when looking at the version that was checked.
+  const checks = useMemo(() => {
+    const c = plan?.check;
+    if (!c || c.status !== 'done' || c.versionId !== version?.id) return undefined;
+    return new Map(c.items.filter(i => i.view === view && i.kind === 'node').map(i => [i.id, i.result]));
+  }, [plan, version, view]);
+
+  // The plan laid over this view's map; with "Changes only", just what changes and the parts that
+  // lead to it (ancestors, the other ends of changed edges).
+  const shown = useMemo(() => {
+    if (!onPlan) return map;
+    const pm = applyPlan(map, version!.body.changes[view]);
+    let { nodes, edges } = pm;
+    if (filter === 'changes') {
+      const byId = new Map(nodes.map(n => [n.id, n]));
+      const keep = new Set<string>();
+      const withAncestors = (id: string) => { for (let n = byId.get(id); n; n = n.parent ? byId.get(n.parent) : undefined) keep.add(n.id); };
+      for (const n of nodes) if (n.status) withAncestors(n.id);
+      for (const e of edges) if (e.status) { withAncestors(e.from); withAncestors(e.to); }
+      nodes = nodes.filter(n => keep.has(n.id));
+      edges = edges.filter(e => e.status);
+    }
+    const base: StoredMap = map ?? { version: 1, view, generatedAt: 'none', commit: null, model: '', warnings: [], nodes: [], edges: [] };
+    // A distinct identity per version and filter, so the canvas lays it out afresh.
+    return { ...base, generatedAt: `${base.generatedAt}|plan-${version!.id}|${filter}`, nodes, edges };
+  }, [onPlan, map, version, view, filter]);
+
+  const stale = useMemo(() => new Set(onPlan ? [] : data?.staleNodeIds ?? []), [data, onPlan]);
   const inContext = useMemo(() => new Set(ctx.filter(c => c.view === view).map(c => c.nodeId)), [ctx, view]);
   const heat = useMemo(() => {
     const out = new Map<string, Heat>();
-    if (!map) return out;
+    if (!shown) return out;
     for (const [rel, h] of touched) {
-      for (const id of nodesForFile(map, rel)) if (out.get(id) !== 'edit') out.set(id, h);
+      for (const id of nodesForFile(shown, rel)) if (out.get(id) !== 'edit') out.set(id, h);
     }
     return out;
-  }, [map, touched]);
+  }, [shown, touched]);
+  const pickedNode = picked ? (shown?.nodes.find(n => n.id === picked) as PlannedNode | undefined) : undefined;
 
   return (
     <aside className="chat-map">
@@ -283,28 +390,216 @@ function ChatMapPane({ project, ctx, onToggle, touched, live }: {
         <div className="map-tabs">
           {MAP_VIEWS.map(v => <button key={v.id} className={v.id === view ? 'on' : ''} onClick={() => setView(v.id)}>{v.label}</button>)}
         </div>
+        {version && (
+          <div className="mode-toggle" role="radiogroup" aria-label="Layer">
+            {(['current', 'plan'] as const).map(l => (
+              <button key={l} role="radio" aria-checked={layer === l} className={layer === l ? 'on' : ''} onClick={() => setLayer(l)}>
+                {l === 'current' ? 'Current' : 'Plan'}
+              </button>
+            ))}
+          </div>
+        )}
         <span className="muted chat-map-legend">
-          {touched.size > 0 ? (live ? 'This run: ' : 'Last run: ') : ''}
-          <span className="heat-tag read">read</span> <span className="heat-tag edit">edited</span>
+          {onPlan
+            ? <><span className="plan-tag added">new</span> <span className="plan-tag changed">changed</span> <span className="plan-tag removed">removed</span></>
+            : <>{touched.size > 0 ? (live ? 'This run: ' : 'Last run: ') : ''}<span className="heat-tag read">read</span> <span className="heat-tag edit">edited</span></>}
         </span>
       </div>
-      {map && <Crumbs map={map} root={project.name} path={path} onPath={setPath} />}
+      {onPlan && plan && version && (
+        <PlanBar
+          chat={chat} plan={plan} version={version} filter={filter} onFilter={setFilter} onVersion={setVersionId}
+          picked={pickedNode} view={view} busy={live}
+          onChanged={p => { setPlan(p); if (p.version) setVersionId(p.version.id); }}
+        />
+      )}
+      {shown && shown.nodes.length > 0 && <Crumbs map={shown} root={project.name} path={path} onPath={setPath} />}
       <div className="chat-map-canvas">
-        {map
+        {shown && shown.nodes.length > 0
           ? <MapCanvas
-              map={map} view={view} stale={stale} path={path} onPath={setPath} inContext={inContext} heat={heat}
+              map={shown} view={view} stale={stale} path={path} onPath={setPath} inContext={inContext} heat={heat} plan={onPlan} checks={checks}
               // A narrow side pane, used to pick nodes: an overview matters more than full-size text.
               minFitZoom={0.35}
               onSelect={id => {
-                const n = id ? map.nodes.find(x => x.id === id) : undefined;
+                const n = id ? shown.nodes.find(x => x.id === id) : undefined;
+                setPicked(n?.id ?? null);
                 if (n) onToggle({ view, nodeId: n.id, label: n.label });
               }}
             />
-          : <div className="empty muted">No {view} map yet — make one from the project's Map screen.</div>}
+          : <div className="empty muted">
+              {onPlan ? `This plan doesn't change the ${view} view.` : `No ${view} map yet — make one from the project's Map screen.`}
+            </div>}
       </div>
       <div className="chat-map-foot muted">Click a node to attach it to your message · double-click to open it</div>
     </aside>
   );
+}
+
+const FRESHNESS: Record<PlanFreshness['state'], { label: string; tone: string; title: string }> = {
+  fresh: { label: 'matches the code', tone: '', title: 'Nothing changed since this version was made.' },
+  elsewhere: { label: 'code changed elsewhere', tone: '', title: 'Files changed since this version, but none the plan works in.' },
+  stale: { label: 'out of date', tone: 'warn', title: 'Files the plan works in changed since this version; revalidate it or ask for a revision.' },
+  'map-regenerated': { label: 'map regenerated', tone: 'warn', title: 'A map this plan builds on was regenerated; revalidate it against the new one.' },
+};
+
+// The plan's header in the map pane: which version, how current it is, the filter, and its text.
+function PlanBar({ chat, plan, version, filter, onFilter, onVersion, picked, view, busy, onChanged }: {
+  chat: Chat; plan: PlanResponse; version: NonNullable<PlanResponse['version']>; filter: 'all' | 'changes';
+  onFilter: (f: 'all' | 'changes') => void; onVersion: (id: number) => void; picked?: PlannedNode; view: MapViewId;
+  busy: boolean; onChanged: (p: PlanResponse) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [error, setError] = useState('');
+  const act = async (f: () => Promise<PlanResponse>) => {
+    setError('');
+    try { onChanged(await f()); } catch (e) { setError((e as Error).message); }
+  };
+  const live = plan.plan?.status === 'draft' || plan.plan?.status === 'approved';
+  // Freshness is about drafts: once a version is approved, Build is meant to change the code and the
+  // check regenerates the maps, so drift is expected there, not a warning.
+  const isApproved = version.id === plan.plan?.approvedVersionId;
+  const needsRevalidation = !isApproved && (version.freshness.state === 'stale' || version.freshness.state === 'map-regenerated');
+  const f = FRESHNESS[version.freshness.state];
+  const approvedId = plan.plan?.approvedVersionId ?? null;
+  // Dropping keeps the record of what was approved, so "dropped" has to win over it.
+  const dropped = plan.plan?.status === 'dropped';
+  const status = dropped ? 'dropped' : version.id === approvedId ? 'approved' : version.approvedAt ? 'approved earlier' : 'draft';
+  const freshTitle = f.title + (version.freshness.touched.length ? `\n${version.freshness.touched.slice(0, 12).join('\n')}` : '')
+    + (version.freshness.baseMissing ? '\nThe commit it was made on is gone (rebase or reset).' : '');
+  return (
+    <div className="plan-bar">
+      <div className="plan-bar-row">
+        <select value={version.id} onChange={e => onVersion(Number(e.target.value))} aria-label="Plan version">
+          {plan.versions.map(v => (
+            <option key={v.id} value={v.id}>
+              v{v.version}{v.source === 'revalidated' ? ' (revalidated)' : ''}{v.id === approvedId ? (dropped ? ' · was approved' : ' · approved') : ''}
+            </option>
+          ))}
+        </select>
+        <span className={`badge ${status === 'approved' ? 'run' : ''}`}>{status}</span>
+        {!isApproved && <span className={`badge ${f.tone}`} title={freshTitle}>{f.label}</span>}
+        <div className="mode-toggle" role="radiogroup" aria-label="Show">
+          {(['all', 'changes'] as const).map(x => (
+            <button key={x} role="radio" aria-checked={filter === x} className={filter === x ? 'on' : ''} onClick={() => onFilter(x)}>
+              {x === 'all' ? 'All' : 'Changes only'}
+            </button>
+          ))}
+        </div>
+        <button className="link" onClick={() => setOpen(o => !o)} aria-expanded={open}>{open ? 'Hide details' : 'Details'}</button>
+      </div>
+      {live && (
+        <div className="plan-bar-row">
+          {version.id !== plan.plan?.approvedVersionId && (
+            <button
+              className="small" disabled={busy || needsRevalidation}
+              title={needsRevalidation ? 'Revalidate it first: the code or maps changed since this version.' : 'Freeze this version as what Build implements.'}
+              onClick={() => act(() => api.approvePlan(chat.id, version.id))}
+            >
+              Approve v{version.version}
+            </button>
+          )}
+          {needsRevalidation && (
+            <button className="small ghost" disabled={busy} title="Check it against today's code and maps; saved as a new version."
+              onClick={() => act(() => api.revalidatePlan(chat.id, version.id))}>
+              Revalidate
+            </button>
+          )}
+          {version.id === plan.plan?.approvedVersionId && (
+            <button
+              className="small" disabled={busy || plan.check?.status === 'running'}
+              title="Regenerates the maps this plan touches, then compares them, the git changes and the files with the plan."
+              onClick={() => act(() => api.checkPlan(chat.id))}
+            >
+              {plan.check ? 'Check again' : 'Check against plan'}
+            </button>
+          )}
+          <button className="small ghost" disabled={busy} onClick={() => act(() => api.dropPlan(chat.id))}>Drop plan</button>
+          {plan.plan?.approvedVersionId !== null && plan.plan?.approvedVersionId !== undefined && (
+            <span className="muted">
+              Build implements v{plan.versions.find(v => v.id === plan.plan!.approvedVersionId)?.version}
+              {version.id !== plan.plan.approvedVersionId ? ' until you approve another version' : ''}.
+            </span>
+          )}
+        </div>
+      )}
+      {error && <div className="error">{error}</div>}
+      {plan.check && version.id === plan.check.versionId && <CheckSummary check={plan.check} />}
+      <div className="plan-title">{version.body.title}</div>
+      {picked?.status && (
+        <div className="plan-picked">
+          <span className={`plan-tag ${picked.status}`}>{picked.status === 'added' ? 'new' : picked.status}</span>{' '}
+          <strong>{picked.label}</strong>{picked.why ? ` — ${picked.why}` : ''}
+          {picked.before && <PlanBefore before={picked.before} after={picked} />}
+        </div>
+      )}
+      {open && (
+        <div className="plan-details">
+          <Markdown remarkPlugins={[remarkGfm]} components={MD_COMPONENTS}>{version.body.summary}</Markdown>
+          {version.body.steps.length > 0 && (
+            <>
+              <div className="plan-h">Build steps</div>
+              <ol>{version.body.steps.map((s, i) => <li key={i}>{s.text}</li>)}</ol>
+            </>
+          )}
+          {version.body.questions.length > 0 && (
+            <>
+              <div className="plan-h">Open questions</div>
+              <ul>{version.body.questions.map((q, i) => <li key={i}>{q}</li>)}</ul>
+            </>
+          )}
+          {version.warnings.map(w => <div key={w} className="muted">⚠ {w}</div>)}
+          {!version.body.changes[view] && <div className="muted">Nothing changes in this view.</div>}
+        </div>
+      )}
+    </div>
+  );
+}
+
+const CHECK_LABEL: Record<CheckResult, string> = { verified: 'verified', missing: 'missing', review: 'need review', unexpected: 'unexpected' };
+
+// The result of checking what was built against the approved version: counts, then each item with
+// the evidence its result rests on.
+function CheckSummary({ check }: { check: PlanCheck }) {
+  const [open, setOpen] = useState<CheckResult | null>(null);
+  if (check.status === 'running') return <div className="muted">Checking… {check.progress}</div>;
+  if (check.status === 'failed') return <div className="error">Check failed: {check.error}</div>;
+  const order = ['missing', 'review', 'unexpected', 'verified'] as const;
+  return (
+    <div className="check-summary">
+      <div className="plan-bar-row">
+        <span className="muted">Checked {new Date(check.createdAt).toLocaleString([], { dateStyle: 'short', timeStyle: 'short' })}:</span>
+        {order.filter(k => check.counts[k]).map(k => (
+          <button key={k} className={`link check-tag ${k}`} onClick={() => setOpen(o => (o === k ? null : k))} aria-expanded={open === k}>
+            {check.counts[k]} {CHECK_LABEL[k]}
+          </button>
+        ))}
+        {check.tests.length > 0 && (
+          <span className="muted" title={check.tests.map(t => `${t.ok ? '✓' : '✗'} ${t.command}`).join('\n')}>
+            · tests in Build: {check.tests.filter(t => t.ok).length}/{check.tests.length} passed
+          </span>
+        )}
+        {check.tests.length === 0 && <span className="muted">· no test runs seen in Build</span>}
+      </div>
+      {open && (
+        <ul className="check-items">
+          {check.items.filter(i => i.result === open).map(i => (
+            <li key={`${i.view}:${i.kind}:${i.id}`}>
+              <strong>{i.label}</strong>
+              <span className="muted"> {i.kind === 'file' ? 'file' : `${i.change === 'none' ? '' : i.change + ' '}${i.kind}${i.view ? ` · ${i.view}` : ''}`}</span>
+              {i.evidence.length > 0 && <ul>{i.evidence.map(e => <li key={e} className="muted">{e}</li>)}</ul>}
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+// What a changed node was before: only the fields that differ.
+function PlanBefore({ before, after }: { before: MapNode; after: MapNode }) {
+  const rows: [string, string][] = (['label', 'kind', 'summary'] as const).filter(k => before[k] !== after[k]).map(k => [k, before[k]]);
+  if (before.files.join() !== after.files.join()) rows.push(['files', before.files.join(', ')]);
+  if (rows.length === 0) return null;
+  return <div className="plan-before muted">Was: {rows.map(([k, v]) => <span key={k}>{k} “{v}” </span>)}</div>;
 }
 
 function storageGet(k: string) {

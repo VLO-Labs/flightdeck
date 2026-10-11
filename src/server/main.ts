@@ -3,6 +3,7 @@ import { serve } from '@hono/node-server';
 import { serveStatic } from '@hono/node-server/serve-static';
 import { Hono, type Context } from 'hono';
 import { streamSSE } from 'hono/streaming';
+import { z } from 'zod';
 import { execFileSync } from 'node:child_process';
 import { randomUUID, timingSafeEqual } from 'node:crypto';
 import { existsSync, mkdirSync, readdirSync, realpathSync, statSync } from 'node:fs';
@@ -22,6 +23,9 @@ import { changedSince, generatorDecision, jobFor, jobForSession, mapsDir, moveMa
 import { viewFile } from './files.ts';
 import { projectProcesses, stopProcessGroup } from './processes.ts';
 import { refuseLocal } from './guard.ts';
+import { handleMcp } from './mcp.ts';
+import { approve, drop, plannedNode, planResponse, revalidate } from './plans.ts';
+import { startCheck } from './verify.ts';
 import { STACKS, scaffoldPrompt } from '../shared/stacks.ts';
 
 const app = new Hono();
@@ -34,6 +38,12 @@ app.post('/hook', async c => {
   const parsed = HookPayload.safeParse(await c.req.json());
   if (!parsed.success) return c.json(hookResponse({ decision: 'deny', reason: 'Flightdeck could not read the hook payload' }));
   return c.json(hookResponse(await decide(parsed.data)));
+});
+
+// Flightdeck's MCP tools for chat turns (propose_plan): token-bound to a running Discuss turn.
+app.all('/mcp', async c => {
+  const a = await handleMcp(c.req.raw);
+  return a.body === undefined ? c.body(null, a.status as 202) : c.json(a.body, a.status as 200);
 });
 
 // The map generator's hook: read-only tools only, decided without cards.
@@ -295,7 +305,10 @@ app.post('/api/chats/:id/messages', async c => {
   const project = chat && db.select().from(projects).where(eq(projects.id, chat.projectId)).get();
   for (const ref of body.data.context ?? []) {
     const view = MapViewId.safeParse(ref.view);
-    const node = project && view.success ? readMap(mapsDir(project), view.data)?.nodes.find(n => n.id === ref.nodeId) : undefined;
+    // On the map, or else a box that only exists in this chat's plan.
+    const node = project && view.success
+      ? readMap(mapsDir(project), view.data)?.nodes.find(n => n.id === ref.nodeId) ?? plannedNode(id, view.data, ref.nodeId)
+      : undefined;
     if (!node || !view.success) return c.json({ error: `map node ${ref.view}/${ref.nodeId} not found — refresh the map` }, 400);
     context.push({ view: view.data, nodeId: node.id, label: node.label, kind: node.kind, summary: node.summary, files: node.files });
   }
@@ -311,6 +324,51 @@ app.post('/api/chats/:id/settings', async c => {
   if (isRunning(id)) return c.json({ error: 'wait for the current turn to finish' }, 409);
   const row = db.update(chats).set(body.data).where(eq(chats.id, id)).returning().get();
   return row ? c.json(toChat(row)) : c.json({ error: 'no such chat' }, 404);
+});
+
+// The chat's plan (PLAN.md §10): its versions, and one version (default: the latest) with freshness.
+app.get('/api/chats/:id/plan', c => {
+  const chat = db.select().from(chats).where(eq(chats.id, Number(c.req.param('id')))).get();
+  const project = chat && db.select().from(projects).where(eq(projects.id, chat.projectId)).get();
+  if (!chat || !project) return c.json({ error: 'no such chat' }, 404);
+  const v = c.req.query('version');
+  return c.json(planResponse(chat.id, project, v ? Number(v) : undefined));
+});
+
+// Approve freezes a version as what Build implements; revalidate re-checks one against today's code
+// and maps as a new version; drop ends the plan. None of these touch map or source files.
+const PlanAction = z.object({ versionId: z.number() });
+const chatAndProject = (id: string) => {
+  const chat = db.select().from(chats).where(eq(chats.id, Number(id))).get();
+  const project = chat && db.select().from(projects).where(eq(projects.id, chat.projectId)).get();
+  return chat && project ? { chat, project } : null;
+};
+app.post('/api/chats/:id/plan/approve', async c => {
+  const cp = chatAndProject(c.req.param('id'));
+  const body = PlanAction.safeParse(await c.req.json());
+  if (!cp || !body.success) return c.json({ error: 'no such chat or version' }, 404);
+  const r = approve(cp.chat.id, cp.project, body.data.versionId);
+  return r.ok ? c.json(planResponse(cp.chat.id, cp.project, body.data.versionId)) : c.json({ error: r.error }, 409);
+});
+app.post('/api/chats/:id/plan/revalidate', async c => {
+  const cp = chatAndProject(c.req.param('id'));
+  const body = PlanAction.safeParse(await c.req.json());
+  if (!cp || !body.success) return c.json({ error: 'no such chat or version' }, 404);
+  const r = revalidate(cp.chat.id, cp.project, body.data.versionId);
+  return r.ok ? c.json(planResponse(cp.chat.id, cp.project, r.version.id)) : c.json({ error: r.errors.join('\n') }, 409);
+});
+// Check what was built against the approved version: regenerates the plan's maps, then compares.
+app.post('/api/chats/:id/plan/check', c => {
+  const cp = chatAndProject(c.req.param('id'));
+  if (!cp) return c.json({ error: 'no such chat' }, 404);
+  if (isRunning(cp.chat.id)) return c.json({ error: 'wait for the current turn to finish' }, 409);
+  const r = startCheck(cp.chat.id, cp.project);
+  return r.ok ? c.json(planResponse(cp.chat.id, cp.project)) : c.json({ error: r.error }, 409);
+});
+app.post('/api/chats/:id/plan/drop', c => {
+  const cp = chatAndProject(c.req.param('id'));
+  if (!cp) return c.json({ error: 'no such chat' }, 404);
+  return drop(cp.chat.id, 'user') ? c.json(planResponse(cp.chat.id, cp.project)) : c.json({ error: 'nothing to drop' }, 409);
 });
 
 app.post('/api/chats/:id/stop', c => c.json({ ok: stopTurn(Number(c.req.param('id'))) }));
@@ -389,7 +447,8 @@ if (config.gatewayHost) {
       hostname: config.gatewayHost,
       port: config.port,
       fetch: req => {
-        if (new URL(req.url).pathname.startsWith('/hook')) return new Response('not found', { status: 404 });
+        const path = new URL(req.url).pathname;
+        if (path.startsWith('/hook') || path.startsWith('/mcp')) return new Response('not found', { status: 404 });
         if (!fromGateway(req)) return new Response('forbidden', { status: 403 });
         return app.fetch(req);
       },

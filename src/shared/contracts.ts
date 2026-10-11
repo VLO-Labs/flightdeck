@@ -127,6 +127,10 @@ export type ClaudeEvent = z.infer<typeof ClaudeEvent> & Record<string, unknown>;
 // log file, replayed on reconnect, streamed live over SSE.
 // ---------------------------------------------------------------------------------------------
 
+// How a planned item turned out when checked against the code (PLAN.md §10).
+export const CheckResult = z.enum(['verified', 'missing', 'unexpected', 'review']);
+export type CheckResult = z.infer<typeof CheckResult>;
+
 const base = { at: z.string(), runId: z.number() };
 
 export const FeedItem = z.discriminatedUnion('kind', [
@@ -141,6 +145,18 @@ export const FeedItem = z.discriminatedUnion('kind', [
     ...base,
     status: z.enum(['started', 'finished', 'failed', 'stopped']),
     detail: z.string().optional(),
+  }),
+  // The agent proposed a plan version (Discuss), through Flightdeck's propose_plan tool.
+  z.object({
+    kind: z.literal('plan'), ...base, versionId: z.number(), version: z.number(), title: z.string(),
+    counts: z.object({ added: z.number(), changed: z.number(), removed: z.number() }),
+  }),
+  // The chat's plan was dropped: by you (the Drop button) or by the agent when you asked in the chat.
+  z.object({ kind: z.literal('plan-dropped'), ...base, by: z.enum(['user', 'agent']) }),
+  // A check of what was built against the approved plan finished.
+  z.object({
+    kind: z.literal('check'), ...base, checkId: z.number(), version: z.number(), versionId: z.number().optional(),
+    counts: z.record(CheckResult, z.number()), failed: z.string().optional(),
   }),
   z.object({
     kind: z.literal('approval'),
@@ -229,6 +245,118 @@ export const MapResponse = z.object({
   job: MapJob.nullable(),
 });
 export type MapResponse = z.infer<typeof MapResponse>;
+
+// ---------------------------------------------------------------------------------------------
+// Plans (PLAN.md §10): a proposed change to the maps, made in a Discuss chat. A separate layer —
+// nothing here is ever written into a map file. Versions are immutable once saved.
+// ---------------------------------------------------------------------------------------------
+
+const Why = z.string().min(1).max(500).describe('one line: why this change');
+const Path = z.string().min(1).max(300);
+
+export const PlanAddNode = MapNode.extend({
+  files: z.array(Path).describe('files it will live in, repo-relative; they may not exist yet'),
+  why: Why,
+});
+export const PlanChangeNode = z.object({
+  id: z.string().min(1).describe('an existing node'),
+  label: z.string().min(1).optional(), kind: z.string().optional(), summary: z.string().optional(),
+  files: z.array(Path).optional(), fields: z.array(MapField).optional(),
+  why: Why,
+});
+export const PlanRemoveNode = z.object({ id: z.string().min(1), why: Why });
+export const PlanAddEdge = z.object({ from: z.string().min(1), to: z.string().min(1), label: z.string(), why: Why });
+export const PlanRemoveEdge = z.object({
+  from: z.string().min(1), to: z.string().min(1),
+  label: z.string().optional().describe('only needed when several edges join the same two nodes'),
+  why: Why,
+});
+
+export const PlanViewChange = z.object({
+  addNodes: z.array(PlanAddNode).max(200).default([]),
+  changeNodes: z.array(PlanChangeNode).max(200).default([]),
+  removeNodes: z.array(PlanRemoveNode).max(200).default([]), // removing a node removes everything inside it
+  addEdges: z.array(PlanAddEdge).max(400).default([]),
+  removeEdges: z.array(PlanRemoveEdge).max(400).default([]),
+});
+export type PlanViewChange = z.infer<typeof PlanViewChange>;
+
+// What the agent submits (also the `propose_plan` tool's input schema).
+export const PlanBody = z.object({
+  title: z.string().min(1).max(120),
+  summary: z.string().min(1).max(4000),
+  changes: z.object({
+    architecture: PlanViewChange.optional(),
+    'data-model': PlanViewChange.optional(),
+    flows: PlanViewChange.optional(),
+  }),
+  steps: z.array(z.object({
+    text: z.string().min(1).max(1000),
+    nodes: z.array(z.string()).default([]).describe('"view:id" of the nodes this step builds or changes'),
+  })).max(50).default([]),
+  questions: z.array(z.string().min(1).max(1000)).max(20).default([]).describe('what is still open for the user to decide'),
+});
+export type PlanBody = z.infer<typeof PlanBody>;
+
+// The code and maps a version was made against: each repository's HEAD and its working-tree changes
+// at that moment (path → content hash; "absent" for a deleted file), and each map it refers to.
+export const PlanBaseline = z.object({
+  repos: z.record(z.string(), z.object({ head: z.string().nullable(), dirty: z.record(z.string(), z.string()) })),
+  maps: z.record(z.string(), z.object({ generatedAt: z.string(), commit: z.string().nullable() }).nullable()),
+  takenAt: z.string(),
+});
+export type PlanBaseline = z.infer<typeof PlanBaseline>;
+
+// fresh: nothing changed · elsewhere: code changed, but not where the plan works · stale: code the plan
+// covers changed · map-regenerated: a map it refers to was regenerated. The last two need revalidation.
+export const PlanFreshness = z.object({
+  state: z.enum(['fresh', 'elsewhere', 'stale', 'map-regenerated']),
+  touched: z.array(z.string()), // changed files the plan covers
+  changed: z.number(), // all changed files
+  maps: z.array(MapViewId), // views whose map was regenerated
+  baseMissing: z.boolean(), // a commit the plan was made against is gone (rebase/reset)
+});
+export type PlanFreshness = z.infer<typeof PlanFreshness>;
+
+// Checking what was built against an approved version (PLAN.md §10). A map id only aligns plan and
+// code; a result rests on git changes, files and citations in code.
+export const CheckItem = z.object({
+  view: MapViewId.nullable(), // null: a changed file no planned part accounts for
+  kind: z.enum(['node', 'edge', 'file']),
+  change: z.enum(['add', 'change', 'remove', 'none']),
+  id: z.string(), // node id, "from→to", or a file path
+  label: z.string(),
+  result: CheckResult,
+  evidence: z.array(z.string()), // what the result rests on, one plain line each
+});
+export type CheckItem = z.infer<typeof CheckItem>;
+export const PlanCheck = z.object({
+  id: z.number(), versionId: z.number(), version: z.number(), createdAt: z.string(),
+  status: z.enum(['running', 'done', 'failed']), progress: z.string(), error: z.string().nullable(),
+  items: z.array(CheckItem),
+  tests: z.array(z.object({ command: z.string(), ok: z.boolean(), at: z.string() })), // test runs seen in Build turns
+  counts: z.record(CheckResult, z.number()),
+});
+export type PlanCheck = z.infer<typeof PlanCheck>;
+
+export const PlanVersionInfo = z.object({
+  id: z.number(), version: z.number(), source: z.enum(['agent', 'revalidated']),
+  createdAt: z.string(), approvedAt: z.string().nullable(),
+  counts: z.object({ added: z.number(), changed: z.number(), removed: z.number() }),
+});
+export type PlanVersionInfo = z.infer<typeof PlanVersionInfo>;
+
+export const PlanResponse = z.object({
+  plan: z.object({
+    id: z.number(), status: z.enum(['draft', 'approved', 'done', 'dropped']),
+    approvedVersionId: z.number().nullable(),
+  }).nullable(),
+  versions: z.array(PlanVersionInfo),
+  // The version asked for (default: the latest), with its content and how current it still is.
+  version: PlanVersionInfo.extend({ body: PlanBody, baseline: PlanBaseline, warnings: z.array(z.string()), freshness: PlanFreshness }).nullable(),
+  check: PlanCheck.nullable(), // the latest check of the approved version
+});
+export type PlanResponse = z.infer<typeof PlanResponse>;
 
 export const FileResponse = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('file'), path: z.string(), content: z.string(), truncated: z.boolean() }),

@@ -9,6 +9,7 @@ import * as feed from './feed.ts';
 import { EDIT_TOOLS, evaluate, suggestPattern } from './rules.ts';
 import { activeRunForSession } from './runner.ts';
 import { isReadOnlyShell } from '../shared/shell.ts';
+import { FLIGHTDECK_TOOLS } from './mcp.ts';
 
 type Answer = { decision: 'allow' | 'deny'; reason: string };
 type ApprovalItem = Extract<FeedItem, { kind: 'approval' }>;
@@ -61,6 +62,19 @@ export async function decide(p: HookPayload): Promise<Answer> {
   };
 
   const isEdit = EDIT_TOOLS.has(p.tool_name);
+
+  // Flightdeck's own tools read the maps or save a plan version, nothing else (the tools re-check
+  // Discuss mode themselves). ToolSearch only loads tool descriptions, which is how Claude Code
+  // brings MCP tools in; a card for it would stall every plan.
+  if (FLIGHTDECK_TOOLS.has(p.tool_name)) {
+    if (run.mode !== 'discuss') return { decision: 'deny', reason: 'Plans are proposed in Discuss mode.' };
+    record(run.runId, p, 'allowed', 'mode', undefined, 'Flightdeck plan tool');
+    return { decision: 'allow', reason: 'Flightdeck plan tool' };
+  }
+  if (p.tool_name === 'ToolSearch') {
+    record(run.runId, p, 'allowed', 'mode', undefined, 'loads tool descriptions only');
+    return { decision: 'allow', reason: 'loads tool descriptions only' };
+  }
 
   // 0. Discuss mode never changes anything, whatever the rules say or the user would click: no file
   // edits, and no shell command unless every part of it is known read-only.

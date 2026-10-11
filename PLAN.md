@@ -343,3 +343,105 @@ path, like routing/alchemira), the tunnel route and the SSO gateway entry.
 Git panel (commits/pushes happen in chat, as in the terminal today) · terminal · run/debug ·
 problems panel · deploys and the deployment diagram view · GitHub integration · cursor-agent ·
 worktree-per-chat parallel building · cross-project views.
+
+## 10. Plan-first changes (design approved 2026-10-11)
+
+Today the maps only show what **exists**. This adds the other direction: in a Discuss chat, the
+agent draws what it **proposes** to build as a change to the maps; you review and steer it as a
+picture; Build implements the approved version; then the result is checked against it, grounded
+in the code and git, not only in a regenerated diagram.
+
+```
+Discuss: talk ──▶ agent submits a proposal (v1, v2, …) ──▶ map pane draws it over the current map
+           ▲                                                   │ click boxes, ask for changes
+           └───────────────────────────────────────────────────┘
+Approve vN (frozen) ──▶ Build: every turn gets vN as its spec, and records that it used vN
+                    ──▶ Verify: git changes + files + code citations + regenerated maps
+                        ──▶ Verified / Missing / Unexpected / Needs review
+```
+
+It's for planning architecture and reviewing what got built, not a visual IDE: no diagram editor,
+no drag-and-drop, no task tracker.
+
+### Rules
+1. **Source of truth stays separate.** Maps in `.flightdeck/<view>.json` are only ever written by
+   generation from the code. A plan is a separate layer in Flightdeck's database, always drawn and
+   labelled as *proposed*, and nothing in the planning path writes map files or source files.
+2. **Every version records its baseline**: each repository's HEAD SHA, the working-tree changes at
+   that moment (path + content hash of every modified or untracked file), and the `generatedAt` and
+   commit of each map it refers to. Flightdeck compares that with now and reports: *fresh*;
+   *code changed elsewhere* (changes that don't touch the plan's files); *stale* (changes touch
+   files the plan covers); *map regenerated* (references are re-checked against the new map).
+   A stale version can't be approved until it is **revalidated** (same content, checked against
+   the current maps, saved as a new version with a new baseline) or revised by the agent.
+3. **Readable overlay.** The current map's layout is kept; the plan adds to it. One set of markers
+   everywhere: **added** (dashed outline, "new"), **changed** ("changed", before/after in the
+   panel), **removed** (faded, struck through, kept in place), for boxes and arrows alike.
+   An **All / Changes only** filter; under All, unchanged parts stay visible but subdued. Parents
+   whose insides change say so, so drill-down finds changes. Clicking a box (planned or existing)
+   attaches it to the message, as today.
+4. **Approvals are immutable.** Versions are insert-only. Approving freezes one version id; Build
+   turns are given that version and each run records which version it used. A later proposal makes
+   a new draft and never touches an approved version; the build spec changes only when you approve
+   another version.
+5. **Verification is grounded.** Map ids are only used to *align* plan and code. Evidence per
+   planned item: files the plan names exist and were changed in git since the baseline; the files
+   of the regenerated node changed; its arrows are cited in code (`evidence`); tests, where the
+   project has them. Four results: **Verified** (code evidence, not only a node), **Missing** (no
+   trace), **Unexpected** (changed in git or present in the map but not in the plan), **Needs
+   review** (partial or diagram-only evidence). A node that exists only in a regenerated diagram is
+   never Verified.
+6. **The proposal endpoint is locked down.** `propose_plan` is an MCP tool served by Flightdeck at
+   `/mcp`. Each Discuss turn gets a fresh random token (in the `--mcp-config` header it passes to
+   `claude`), bound to that run, chat and project, valid only while that run is active and in
+   Discuss. Requests with an `Origin` header (any browser page) are refused; the gateway listener
+   refuses `/mcp` like `/hook`; every body is size-limited and checked against the schema. The tool
+   writes only a plan version row: it can't touch files, and Build turns don't get it.
+
+### Phases (each tested before the next)
+1. **Plan data model**: schema, validation against the current maps, `applyPlan` (shared, pure),
+   insert-only versions, baselines and staleness. Unit tests.
+2. **Proposal and overlay**: spike `--mcp-config` (HTTP) with Claude Code first, then the `/mcp`
+   endpoint and token, hook allowance, the Discuss prompt, a feed item per version, and the map
+   pane's Current / Plan switch with All / Changes only.
+3. **Approval and Build**: Approve / Drop, revalidate, the approved version in the Build prompt,
+   `runs.plan_version_id`.
+4. **Verification**: regenerate the plan's views with its ids as hints, gather git and file
+   evidence, show the four states in the chat and on the plan view.
+
+### As built (2026-10-11)
+All four phases, each tested before the next (62 unit tests; live runs in Playground, chat 8).
+- **Data**: `plans` (one per chat), `plan_versions` (insert-only: SQLite triggers refuse updates to
+  content, un-approving and deletes), `plan_checks`, `runs.plan_version_id`. Pure core in
+  `src/shared/plan.ts` (validate, overlay, files, text for Build); git and storage in
+  `src/server/plans.ts`; checks in `src/server/verify.ts`; the MCP endpoint in `src/server/mcp.ts`.
+- **Baselines**: per repository, HEAD plus a git content hash of every modified/untracked file, so
+  uncommitted work at proposal time doesn't read as change later, and committing it unchanged
+  doesn't either. `.flightdeck/` is ignored. Freshness: *stale* only when changed files fall
+  inside what the plan adds, changes or removes; a neighbour changing is *elsewhere*.
+- **Spike findings** (Claude Code 2.1.296): `--mcp-config` with an `http` server works in `-p`
+  runs, and `${FLIGHTDECK_MCP_TOKEN}` in its headers is expanded from the environment, so the
+  token never appears on the command line. The PreToolUse hook sees `mcp__flightdeck__…` calls.
+  MCP tools are deferred: the agent loads them through `ToolSearch`, which the hook now allows
+  without a card (it only loads descriptions). A Build turn resuming a session that had the MCP
+  server in Discuss works without it.
+- **A resumed session keeps its FIRST turn's system prompt**: `--append-system-prompt` on later
+  turns is ignored. So Build turns never learned they were in Build (the cause of the
+  "it thinks we're in Discuss" report — the earlier prompt-only fix didn't reach the agent). Each
+  turn's message now starts with that turn's Flightdeck instructions (mode, and for Build the
+  approved plan); the feed shows only what the user typed. Verified: a resumed Build turn reports
+  Build mode and the approved version, and stopped on the plan's open questions.
+- **`get_maps`**: a second MCP tool returning the current maps compactly, so the agent doesn't need
+  shell reads (each an approval card) to learn node ids.
+- **Checks** regenerate only the views the approved version changes, one at a time, with id hints
+  (the previous map's ids, then the plan's); the generator is told the ids are names only. Test
+  runs are read from the Build turns that recorded that version. Verified live with nothing
+  built: all five planned items came back Missing, with evidence, and the hints didn't make the
+  generator draw them.
+- **Not yet seen live**: a check after a real Build (Verified and Unexpected on real changes). The
+  unit tests cover those paths.
+
+### Open questions
+- If Build finds the plan doesn't fit reality: the agent stops and says so (leaning), rather than
+  amending the plan itself.
+- Done plans stay in the chat as history; a decision record in the repo is not in v1.

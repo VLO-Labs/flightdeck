@@ -31,3 +31,16 @@ test('edges inside one visible node, or leaving the level, are not drawn', () =>
   assert.deepEqual(liftEdges(NODES, [edge('web.client', 'web')], null), []);
   assert.deepEqual(liftEdges(NODES, [edge('api.routes', 'db')], 'api'), []); // db is not inside api
 });
+
+test('plan status survives lifting: all added → added, a mix → changed', () => {
+  const nodes = [
+    { id: 'a', parent: null, label: 'a', kind: 'module', summary: '', files: [], fields: [] },
+    { id: 'b', parent: null, label: 'b', kind: 'module', summary: '', files: [], fields: [] },
+    { id: 'b1', parent: 'b', label: 'b1', kind: 'module', summary: '', files: [], fields: [] },
+  ];
+  const added = liftEdges(nodes, [{ from: 'a', to: 'b1', label: 'x', status: 'added' }], null);
+  assert.equal(added[0]!.status, 'added');
+  const mixed = liftEdges(nodes, [{ from: 'a', to: 'b', label: 'x', status: 'removed' }, { from: 'a', to: 'b1', label: 'y', status: 'added' }], null);
+  assert.equal(mixed[0]!.status, 'changed');
+  assert.equal(liftEdges(nodes, [{ from: 'a', to: 'b', label: 'x' }], null)[0]!.status, undefined);
+});
