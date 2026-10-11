@@ -66,8 +66,9 @@ const PROPOSE_REQUIREMENTS_DESCRIPTION =
   'they approve separately). For an existing document send `edits`: exact old_string/new_string ' +
   'replacements against its current text (read it first; each old_string must be unique). For a new ' +
   'document (e.g. features/<slug>.md) send its whole text as `content`. Requirement ids (BR-001, ' +
-  'AC-001) start a heading or list item, are never renumbered or reused, and a rule that no longer ' +
-  'applies is marked "(retired)" rather than deleted. A newer proposal for the same document replaces ' +
+  'AC-001) start a heading or list item; once approved they are never renumbered or reused, and an ' +
+  'approved rule that no longer applies is marked "(retired)" rather than deleted. Put what the user ' +
+  'hasn\'t decided under Open questions. A newer proposal for the same document replaces ' +
   'your open one. The reply says whether it was saved, or what to fix.';
 
 function editInputSchema() {

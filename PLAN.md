@@ -463,8 +463,10 @@ can discuss it. `CLAUDE.md` stays the engineering instructions; the PRD says wha
 - **Only the UI writes `docs/requirements/`**: the hook refuses agent edits there in both modes. The
   agent proposes edits through an MCP tool (like `propose_plan`); Accept writes the file. Every save
   carries the hash it started from, and a mismatch (an IDE edit meanwhile) is refused as a conflict.
-- **Ids are never renumbered**: a new id is one above the highest ever used; a removed rule stays,
-  marked retired.
+- **Approved ids are never renumbered**: a new id is one above the highest in use; an approved rule
+  that no longer applies stays, marked retired. Until its first approval a draft's ids can change
+  freely (changed 2026-10-11: protecting every saved id made a first draft — especially one written
+  from a conversation or the code — accumulate retired rules before anyone had approved anything).
 - **Context is a reference** (`{doc, id, revision}`), resolved server-side, as map nodes are.
 - Plans stay a *layer* on the map tabs (§10 rule 3), not a tab of their own.
 
@@ -523,6 +525,16 @@ can discuss it. `CLAUDE.md` stays the engineering instructions; the PRD says wha
    map, drills to the node and selects it. Verified live (Haiku, Build): with BR-001 attached and
    BR-002/BR-003 in the text, the agent quoted v2's wording (not the newer draft), BR-002 came in as
    named, BR-003 was reported as unapproved, and the run recorded both v2 revisions.
+
+### Requirements first for new projects (2026-10-11)
+*New project* asks what to start with. **Requirements** (the default) creates the repository and opens
+a Discuss chat titled "Requirements" with the PRD tab beside it; if a description was given, its first
+turn asks the questions it needs and, when told to, proposes `PRD.md` from the conversation, with what
+isn't decided under Open questions — no scaffold, no code. A stack can be named as the intention or left
+for later. **Scaffold** is the earlier behaviour (a Build chat that generates the stack). Discuss turns
+are told to write down only what the user decided. Verified live (Haiku): the kickoff asked about users,
+order contents, limits, payment and changes; after the answers it proposed a PRD with BR-001…008 matching
+them and the undecided points (stock limits, accounts, slots) as open questions.
 
 ### Not in v1
 Automatic requirement ↔ code traceability; a diff of the file against its approved version; editing

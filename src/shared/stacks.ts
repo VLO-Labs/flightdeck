@@ -51,6 +51,23 @@ export const STACKS = [
 export type StackId = (typeof STACKS)[number]['id'];
 export const STACK_IDS = STACKS.map(s => s.id) as [StackId, ...StackId[]];
 
+// The first message of a project started from its requirements: a Discuss turn that asks before it
+// writes, and proposes the PRD (PLAN.md §11) — nothing gets built until the user switches to Build.
+export function requirementsKickoff(name: string, description: string, stackId?: StackId): string {
+  const stack = stackId ? STACKS.find(s => s.id === stackId) : undefined;
+  return [
+    `This is a brand-new, empty repository for a project called "${name}". Nothing is built yet: we're ` +
+      'defining what it must do before deciding how. Here is what I have in mind:',
+    description.trim(),
+    stack ? `The stack I intend to use, later: ${stack.label}.` : '',
+    'Ask me what you need to know — who uses it, the goals, what is in and out of scope, the rules that must ' +
+      'always hold — a few questions at a time. When we have settled enough, propose docs/requirements/PRD.md ' +
+      'with the requirements tool (the whole text, as a new document), with ids for the business rules; put ' +
+      'anything I haven\'t decided under Open questions instead of inventing it. Feature specs follow the same way, ' +
+      'one per feature, once the PRD is approved. Don\'t scaffold or write code yet.',
+  ].filter(Boolean).join('\n\n');
+}
+
 export function scaffoldPrompt(stackId: StackId, name: string, description?: string): string {
   const stack = STACKS.find(s => s.id === stackId)!;
   return [

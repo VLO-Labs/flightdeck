@@ -8,6 +8,7 @@ import { ChatView } from './ChatView.tsx';
 import { RulesView } from './RulesView.tsx';
 import { MapView, type MapNav, type NodeRef } from './MapView.tsx';
 import { formatRoute, parseRoute, type Route } from './route.ts';
+import { remember } from './workspace.ts';
 
 type View = { kind: 'chat'; chatId: number } | { kind: 'rules' } | { kind: 'map' } | { kind: 'none' };
 
@@ -140,9 +141,11 @@ export function App() {
         {adding === 'new' && (
           <NewProject
             onCancel={() => setAdding(null)}
-            onCreated={(p, chatId, err) => {
-              // The project exists even if the scaffold turn couldn't start; the chat can be resent.
-              if (err) setError(`Project created, but the scaffold didn't start: ${err}`);
+            onCreated={(p, chatId, start, err) => {
+              // The project exists even if its first turn couldn't start; the chat can be resent.
+              if (err) setError(`Project created, but its first turn didn't start: ${err}`);
+              // Requirements first: the chat opens with the PRD tab beside it.
+              if (start === 'requirements') remember(chatId, { draft: '', ctx: [], tab: 'prd' }, storage());
               setProjects(ps => [...ps, p]);
               viewAfterSwitch.current = { kind: 'chat', chatId };
               setProjectId(p.id);
@@ -290,12 +293,17 @@ function FolderBrowser({ onChoose }: { onChoose: (path: string) => void }) {
 
 const slug = (s: string) => s.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
 
-function NewProject({ onCreated, onCancel }: { onCreated: (p: Project, chatId: number, error?: string) => void; onCancel: () => void }) {
+// A new project starts either from its requirements (a Discuss chat that works out the PRD; no code yet)
+// or by scaffolding the stack (a Build chat).
+function NewProject({ onCreated, onCancel }: {
+  onCreated: (p: Project, chatId: number, start: 'scaffold' | 'requirements', error?: string) => void; onCancel: () => void;
+}) {
   const [name, setName] = useState('');
   // The folder follows the name until it's edited by hand.
   const root = useProjectsRoot();
   const [path, setPath] = useState<string | null>(null);
-  const [stack, setStack] = useState<string>(STACKS[0].id);
+  const [start, setStart] = useState<'requirements' | 'scaffold'>('requirements');
+  const [stack, setStack] = useState<string>(''); // '' = decide later (requirements first only)
   const [description, setDescription] = useState('');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
@@ -308,8 +316,8 @@ function NewProject({ onCreated, onCancel }: { onCreated: (p: Project, chatId: n
         setError('');
         setBusy(true);
         try {
-          const r = await api.createProject({ name: name.trim(), path: folder.trim(), stack, description });
-          onCreated(r.project, r.chatId, r.error);
+          const r = await api.createProject({ name: name.trim(), path: folder.trim(), start, stack: stack || undefined, description });
+          onCreated(r.project, r.chatId, start, r.error);
         } catch (err) {
           setError((err as Error).message);
         } finally {
@@ -319,12 +327,29 @@ function NewProject({ onCreated, onCancel }: { onCreated: (p: Project, chatId: n
     >
       <input value={name} onChange={e => setName(e.target.value)} placeholder="Name" required />
       <input value={folder} onChange={e => setPath(e.target.value)} placeholder="Folder on the box" />
-      <select value={stack} onChange={e => setStack(e.target.value)}>
+      <fieldset className="start-choice">
+        <legend className="label">Start with</legend>
+        <label>
+          <input type="radio" name="start" checked={start === 'requirements'} onChange={() => setStart('requirements')} />
+          <span><strong>Requirements</strong> <span className="muted">— discuss it and write the PRD first; no code yet</span></span>
+        </label>
+        <label>
+          <input type="radio" name="start" checked={start === 'scaffold'} onChange={() => { setStart('scaffold'); setStack(s => s || STACKS[0].id); }} />
+          <span><strong>Scaffold</strong> <span className="muted">— generate the stack now</span></span>
+        </label>
+      </fieldset>
+      <select value={stack} onChange={e => setStack(e.target.value)} aria-label="Stack">
+        {start === 'requirements' && <option value="">Stack: decide later</option>}
         {STACKS.map(s => <option key={s.id} value={s.id}>{s.label}</option>)}
       </select>
-      <textarea value={description} onChange={e => setDescription(e.target.value)} placeholder="What is it? (optional, goes to Claude)" rows={3} />
+      <textarea
+        value={description} onChange={e => setDescription(e.target.value)} rows={3}
+        placeholder={start === 'requirements' ? 'What is it for? (optional: with it, Claude starts asking right away)' : 'What is it? (optional, goes to Claude)'}
+      />
       <div className="form-actions">
-        <button type="submit" disabled={busy || !slug(name)}>{busy ? 'Creating…' : 'Create and scaffold'}</button>
+        <button type="submit" disabled={busy || !slug(name) || (start === 'scaffold' && !stack)}>
+          {busy ? 'Creating…' : start === 'requirements' ? 'Create and discuss' : 'Create and scaffold'}
+        </button>
         <button type="button" className="ghost" onClick={onCancel}>Cancel</button>
       </div>
       {error && <div className="error">{error}</div>}
@@ -332,7 +357,10 @@ function NewProject({ onCreated, onCancel }: { onCreated: (p: Project, chatId: n
   );
 }
 
-// localStorage can throw (private mode, blocked storage); it only remembers the last project.
+// localStorage can throw (private mode, blocked storage); it only remembers the last project and drafts.
+function storage(): Storage | undefined {
+  try { return localStorage; } catch { return undefined; }
+}
 function localStorageGet(k: string) {
   try { return localStorage.getItem(k); } catch { return null; }
 }

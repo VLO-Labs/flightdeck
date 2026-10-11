@@ -188,3 +188,16 @@ test('Build: the approved text, refusals for unapproved parts, ids named in text
   assert.match(line, /PRD\.md has unapproved changes since v2/);
   assert.match(line, /features\/checkout\.md has never been approved/);
 });
+
+test('a draft can renumber or drop its ids until they are approved; then they are fixed', () => {
+  const p2 = { ...project, id: 2 }; // a project of its own: no approvals yet
+  const rel = 'features/onboarding.md';
+  const a = saveRequirement(p2, rel, '# Onboarding\n- **AC-101** First\n- **AC-102** Second\n', null);
+  // Not approved yet: dropping and renumbering are fine.
+  const b = saveRequirement(p2, rel, '# Onboarding\n- **AC-101** First, reworded\n', a.summary.hash);
+  approveRequirement(p2, rel, b.summary.hash!);
+  fails(() => saveRequirement(p2, rel, '# Onboarding\n- **AC-201** Renumbered\n', b.summary.hash), 400, /Removed: AC-101\. Approved ids/);
+  // An id added after the approval is a draft id again.
+  const c = saveRequirement(p2, rel, '# Onboarding\n- **AC-101** First\n- **AC-103** New\n', b.summary.hash);
+  saveRequirement(p2, rel, '# Onboarding\n- **AC-101** First\n- **AC-104** New, renumbered\n', c.summary.hash);
+});

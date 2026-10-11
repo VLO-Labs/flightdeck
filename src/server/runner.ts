@@ -56,8 +56,9 @@ const DISCUSS_PROMPT =
   'Read. You cannot write them: to change one, call propose_requirements_edit with exact replacements ' +
   '(or the whole text, for a new document) and a short summary. The user reviews the change as a diff ' +
   'and accepts or rejects it; accepting makes a draft, which they approve separately. Ids (BR-001, ' +
-  'AC-001) never change and are never reused: add new ones above the highest, and mark ones that no ' +
-  'longer apply "(retired)" instead of deleting them. When a plan implements requirements, name their ids ' +
+  'AC-001) never change once approved and are never reused: add new ones above the highest, and mark ' +
+  'approved ones that no longer apply "(retired)" instead of deleting them. Write down only what the user ' +
+  'decided; put what is still open under Open questions rather than inventing it. When a plan implements requirements, name their ids ' +
   'in its summary or steps: Build turns are given the approved text of every id the plan names.';
 
 // With approved requirements in the message, Build implements them as written (PLAN.md §11).

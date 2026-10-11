@@ -46,11 +46,15 @@ docs/requirements/features/<name>.md   one per feature: scenarios, edge cases, a
 In a multi-repo folder they live in the repository that keeps the maps. `CLAUDE.md` stays the
 engineering instructions; the PRD says what the software must do.
 
-- **Start one:** open a chat → workspace **PRD** tab → *Start the PRD* (a template with headings and
-  guidance, no rules), edit, Save. *+ Feature spec* adds a spec. Or write the files by hand and they
-  show up.
-- **Ids** start a heading or list item (`### BR-001 · …`, `- **AC-001** …`), never change and are
-  never reused; a rule that no longer applies is marked `(retired)`. Saves that break this are refused.
+- **Start one:** for a new project, *+ New project* → **Start with: Requirements** (the default): it
+  creates the repository and opens a Discuss chat — no code — that asks what you need and proposes the
+  PRD from your conversation, leaving what you haven't decided under Open questions; scaffold later in
+  Build. For any project, a Discuss chat can be asked to write or revise it, or use the **PRD** tab →
+  *Start the PRD* (a template with headings and guidance, no rules) and edit it yourself. *+ Feature
+  spec* adds a spec. Files written by hand show up too.
+- **Ids** start a heading or list item (`### BR-001 · …`, `- **AC-001** …`). A draft's ids can change
+  until they are approved; after that they never change and are never reused, and a rule that no
+  longer applies is marked `(retired)`. Saves that break this are refused.
 - **Approve** freezes exactly the text you see as vN (kept in Flightdeck's database); later edits are
   a draft until approved. Nothing is committed for you — commit the files like any others.
 - **In chat:** *+ chat* on any rule or section attaches it to your message. In Discuss the agent can

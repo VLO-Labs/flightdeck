@@ -23,7 +23,7 @@ export const api = {
   projects: () => call(z.array(Project), 'GET', '/api/projects'),
   browse: (path?: string) => call(BrowseResponse, 'GET', `/api/browse${path ? `?path=${encodeURIComponent(path)}` : ''}`),
   addProject: (name: string, path: string) => call(Project, 'POST', '/api/projects', { name, path }),
-  createProject: (body: { name: string; path: string; stack: string; description?: string }) =>
+  createProject: (body: { name: string; path: string; start: 'scaffold' | 'requirements'; stack?: string; description?: string }) =>
     call(z.object({ project: Project, chatId: z.number(), error: z.string().optional() }), 'POST', '/api/projects/new', body),
   chats: (projectId: number) => call(z.array(Chat), 'GET', `/api/projects/${projectId}/chats`),
   newChat: (projectId: number) => call(Chat, 'POST', `/api/projects/${projectId}/chats`),

@@ -547,3 +547,8 @@ button.danger { background: var(--bad); color: #fff; }
 .check-summary { font-size: 12.5px; }
 .check-items { margin: 4px 0; padding-left: 18px; max-height: 30vh; overflow-y: auto; }
 .check-items ul { padding-left: 16px; margin: 0 0 4px; }
+
+.start-choice { border: 0; padding: 0; margin: 2px 0; display: flex; flex-direction: column; gap: 4px; }
+.start-choice legend { padding: 0; margin-bottom: 2px; }
+.start-choice label { display: flex; gap: 6px; align-items: flex-start; font-size: 13px; line-height: 1.4; cursor: pointer; }
+.start-choice input { min-height: 0; margin-top: 3px; }

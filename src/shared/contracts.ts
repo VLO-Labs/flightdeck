@@ -40,12 +40,15 @@ export const Project = z.object({
 export type Project = z.infer<typeof Project>;
 
 export const NewProject = z.object({ name: z.string().min(1), path: z.string().min(1) });
+// start: 'scaffold' opens a Build chat that generates the stack now; 'requirements' opens a Discuss
+// chat to define what to build first (PLAN.md §11) — the stack, if given, is only the intention.
 export const CreateProject = z.object({
   name: z.string().trim().min(1),
   path: z.string().min(1),
-  stack: z.enum(STACK_IDS),
+  start: z.enum(['scaffold', 'requirements']).default('scaffold'),
+  stack: z.enum(STACK_IDS).optional(),
   description: z.string().optional(),
-});
+}).refine(b => b.start === 'requirements' || b.stack !== undefined, { message: 'choose a stack to scaffold' });
 export const ProjectSettings = z.object({
   discussModel: z.string().min(1),
   buildModel: z.string().min(1),

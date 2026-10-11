@@ -121,11 +121,11 @@ export function getRequirement(p: ProjectLike, rel: string, version?: number): R
   };
 }
 
-// The ids a revision of `rel` must keep (its file now and every approved version of it), and the ids
-// every other document uses.
-function idsAround(p: ProjectLike, rel: string, cur: { content: string } | null) {
+// The ids a revision of `rel` must keep — those in any approved version of it; a draft's ids can still
+// change until they are approved, which is what lets a first draft take shape — and the ids every other
+// document uses.
+function idsAround(p: ProjectLike, rel: string) {
   const kept = new Set<string>();
-  if (cur) for (const i of parseRequirements(cur.content).items) kept.add(i.id);
   for (const a of approvalsOf(p.id, rel)) for (const id of JSON.parse(a.ids) as string[]) kept.add(id);
   const elsewhere = new Set<string>();
   for (const d of listRequirements(p).docs) if (d.path !== rel) for (const id of d.ids) elsewhere.add(id);
@@ -141,7 +141,7 @@ export function saveRequirement(p: ProjectLike, rel: string, content: string, ba
     );
   }
   if (cur && cur.content === content) return getRequirement(p, rel);
-  const { kept, elsewhere } = idsAround(p, rel, cur);
+  const { kept, elsewhere } = idsAround(p, rel);
   const errors = checkRevision(parseRequirements(content), kept, elsewhere);
   if (errors.length) throw new RequirementsError(errors.join(' '));
 
@@ -173,7 +173,7 @@ export function approveRequirement(p: ProjectLike, rel: string, hash: string): R
   const latest = approvalsOf(p.id, rel)[0];
   if (latest?.hash === hash) return getRequirement(p, rel);
   const parsed = parseRequirements(cur.content);
-  const { kept, elsewhere } = idsAround(p, rel, null);
+  const { kept, elsewhere } = idsAround(p, rel);
   const errors = checkRevision(parsed, kept, elsewhere);
   if (errors.length) throw new RequirementsError(errors.join(' '));
   db.insert(requirementApprovals).values({
@@ -253,7 +253,7 @@ export function submitRequirementProposal(
     next = input.content!;
   }
   if (cur && next === cur.content) return { ok: false, error: 'the edits change nothing' };
-  const { kept, elsewhere } = idsAround(p, input.path, cur);
+  const { kept, elsewhere } = idsAround(p, input.path);
   const errors = checkRevision(parseRequirements(next), kept, elsewhere);
   if (errors.length) return { ok: false, error: errors.join(' ') };
 

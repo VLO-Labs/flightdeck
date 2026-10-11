@@ -30,7 +30,7 @@ import { refuseLocal } from './guard.ts';
 import { handleMcp } from './mcp.ts';
 import { approve, drop, plannedNode, planResponse, revalidate } from './plans.ts';
 import { startCheck } from './verify.ts';
-import { STACKS, scaffoldPrompt } from '../shared/stacks.ts';
+import { STACKS, requirementsKickoff, scaffoldPrompt } from '../shared/stacks.ts';
 
 const app = new Hono();
 const now = () => new Date().toISOString();
@@ -138,12 +138,13 @@ app.get('/api/browse', c => {
   } satisfies BrowseResponse);
 });
 
-// A brand-new project: make the folder, `git init` it, and open a Build chat that scaffolds the
-// chosen stack. The scaffolding is an ordinary turn, so its commands go through the approval rules.
+// A brand-new project: make the folder, `git init` it, and either open a Build chat that scaffolds the
+// chosen stack (an ordinary turn, so its commands go through the approval rules), or — requirements
+// first — a Discuss chat that works out the PRD before any code exists.
 app.post('/api/projects/new', async c => {
   const body = CreateProject.safeParse(await c.req.json());
-  if (!body.success) return c.json({ error: 'name, folder and stack are required' }, 400);
-  const { name, path, stack, description } = body.data;
+  if (!body.success) return c.json({ error: body.error.issues.some(i => i.message.includes('stack')) ? 'choose a stack to scaffold' : 'name and folder are required' }, 400);
+  const { name, path, start, stack, description } = body.data;
   if (!isAbsolute(path)) return c.json({ error: 'the folder must be an absolute path' }, 400);
   if (!underBrowseRoot(path)) return c.json({ error: outsideRoot() }, 400);
   if (existsSync(path)) return c.json({ error: `${path} already exists. Use "Add project" for an existing repository.` }, 400);
@@ -151,10 +152,18 @@ app.post('/api/projects/new', async c => {
   if (err) return c.json({ error: err }, 400);
 
   const project = insertProject(name, path);
+  if (start === 'requirements') {
+    // Requirements first: a Discuss chat, started only if there's something to start from.
+    const chat = db.insert(chats)
+      .values({ projectId: project.id, title: 'Requirements', sessionId: randomUUID(), mode: 'discuss', createdAt: now() })
+      .returning().get();
+    const r = description?.trim() ? startTurn(chat.id, requirementsKickoff(name, description, stack)) : { ok: true as const };
+    return c.json({ project: toProject(project), chatId: chat.id, error: r.ok ? undefined : r.error });
+  }
   const chat = db.insert(chats)
     .values({ projectId: project.id, title: `Scaffold: ${STACKS.find(s => s.id === stack)!.label}`, sessionId: randomUUID(), mode: 'build', createdAt: now() })
     .returning().get();
-  const r = startTurn(chat.id, scaffoldPrompt(stack, name, description));
+  const r = startTurn(chat.id, scaffoldPrompt(stack!, name, description));
   return c.json({ project: toProject(project), chatId: chat.id, error: r.ok ? undefined : r.error });
 });
 

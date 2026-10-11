@@ -308,7 +308,7 @@ export function PrdView({ project, ctx, onToggle, review, onOpenFile, onRevealNo
               <p><strong>No requirements document yet.</strong></p>
               <p className="muted">
                 The PRD says what the software must do: who it's for, its goals and scope, and business rules with
-                ids that never change. It's a Markdown file in the repository at <code>{list?.dir}/{PRD_FILE}</code>,
+                ids that stay fixed once approved. It's a Markdown file in the repository at <code>{list?.dir}/{PRD_FILE}</code>,
                 with a spec per feature beside it in <code>features/</code>, so it's versioned with the code and
                 readable anywhere.
               </p>

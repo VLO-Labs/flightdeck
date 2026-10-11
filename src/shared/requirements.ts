@@ -4,9 +4,10 @@
 //
 // An id is an upper-case prefix, a dash and at least three digits (BR-001, AC-014), and counts where
 // it starts a heading or a list item, optionally in bold: `### BR-001 · Refunds need a reason`,
-// `- **AC-003** The user sees …`. Ids are unique across all of a project's requirements documents
-// and never renumbered: a rule that no longer applies stays, marked retired (`(retired)` in its
-// line, or the id struck through: `~~BR-004~~`).
+// `- **AC-003** The user sees …`. Ids are unique across all of a project's requirements documents.
+// Once approved, an id is never renumbered or dropped: a rule that no longer applies stays, marked
+// retired (`(retired)` in its line, or the id struck through: `~~BR-004~~`). Before its first
+// approval, a draft's ids can still change freely.
 
 import { MapViewId } from './contracts.ts';
 
@@ -103,8 +104,7 @@ function lastNonBlank(lines: string[], from: number): number {
 const stripRetired = (s: string) => s.replace(/\s*\(retired\)\s*/i, ' ').replace(/[*_~`]/g, '').trim();
 
 // Whether a new revision of one document may be saved. `kept` are the ids this document must keep —
-// what its current file and every approved version of it contain — and `elsewhere` the ids other
-// documents use. An id may move to another document (it is then in `elsewhere`), but never vanish.
+// those in any approved version of it — and `elsewhere` the ids other documents use. An id may move to another document (it is then in `elsewhere`), but never vanish.
 export function checkRevision(next: ParsedRequirements, kept: Iterable<string>, elsewhere: Iterable<string>): string[] {
   const errors: string[] = [];
   if (next.duplicates.length) errors.push(`Duplicate id${next.duplicates.length > 1 ? 's' : ''}: ${next.duplicates.join(', ')}. Each id names one requirement.`);
@@ -114,12 +114,12 @@ export function checkRevision(next: ParsedRequirements, kept: Iterable<string>, 
   if (clash.length) errors.push(`Already used in another document: ${clash.join(', ')}.`);
   const gone = [...new Set(kept)].filter(id => !here.has(id) && !other.has(id)).sort(byId);
   if (gone.length) {
-    errors.push(`Removed: ${gone.join(', ')}. Ids are never dropped or renumbered — keep the line and mark it retired, e.g. "### ~~${gone[0]}~~ … (retired)".`);
+    errors.push(`Removed: ${gone.join(', ')}. Approved ids are never dropped or renumbered — keep the line and mark it retired, e.g. "### ~~${gone[0]}~~ … (retired)".`);
   }
   return errors;
 }
 
-// The next free id for a prefix: one above the highest ever used, retired ones included.
+// The next free id for a prefix: one above the highest in use, retired ones included.
 export function nextId(prefix: string, used: Iterable<string>): string {
   let max = 0;
   for (const id of used) {
@@ -162,7 +162,7 @@ export const PRD_TEMPLATE = (project: string) => `# ${project} — Product requi
 <!-- One line each; the detail goes in features/<name>.md. -->
 
 ## Business rules
-<!-- Rules that hold everywhere. One heading per rule, with an id that never changes:
+<!-- Rules that hold everywhere. One heading per rule, with an id that stays fixed once approved:
 
 ### BR-### · Short name
 What must always (or never) happen, stated so it can be checked.
@@ -193,7 +193,7 @@ requirement is met — code and tests are. -->
 ## Open questions
 
 ## Acceptance criteria
-<!-- Observable results, one per line, each with an id that never changes:
+<!-- Observable results, one per line, each with an id that stays fixed once approved:
 - **AC-###** Given …, when …, then …
 -->
 `;
