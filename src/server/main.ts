@@ -18,7 +18,7 @@ import * as feed from './feed.ts';
 import { decide, hookResponse, lockHolder, resolveApproval } from './hook.ts';
 import { effectiveModel, isRunning, startTurn, stopTurn } from './runner.ts';
 import { TEMPLATE_RULES } from './rules.ts';
-import { changedSince, generatorDecision, jobFor, jobForSession, readMap, staleNodeIds, startGeneration, stopGeneration } from './maps.ts';
+import { changedSince, generatorDecision, jobFor, jobForSession, readMap, repoDirs, staleNodeIds, startGeneration, stopGeneration } from './maps.ts';
 import { viewFile } from './files.ts';
 import { STACKS, scaffoldPrompt } from '../shared/stacks.ts';
 
@@ -64,7 +64,8 @@ app.post('/api/projects', async c => {
   if (isAbsolute(path) && !underBrowseRoot(path)) return c.json({ error: outsideRoot() }, 400);
   if (!isAbsolute(path) || !existsSync(path) || !statSync(path).isDirectory())
     return c.json({ error: `${path} doesn't exist on the box. Use "New project" to create one.` }, 400);
-  if (!existsSync(`${path}/.git`)) return c.json({ error: `${path} is not a git repository` }, 400);
+  if (repoDirs(path).length === 0)
+    return c.json({ error: `${path} is not a git repository, and none of its subfolders is one` }, 400);
   // Compare resolved paths: ~/dev is a symlink, so one repo can be typed two ways.
   const real = realpathSync(path);
   if (db.select().from(projects).all().some(p => toProject(p).realPath === real))
@@ -107,13 +108,13 @@ app.get('/api/browse', c => {
     let r: string;
     try { r = realpathSync(join(real, e.name)); } catch { continue; }
     if (!inside(r) || !statSync(r).isDirectory()) continue;
-    dirs.push({ name: e.name, path: shown(r), isRepo: existsSync(join(r, '.git')) });
+    dirs.push({ name: e.name, path: shown(r), addable: repoDirs(r).length > 0 });
   }
   dirs.sort((a, b) => a.name.localeCompare(b.name));
   return c.json({
     path: shown(real),
     parent: real === realRoot ? null : shown(join(real, '..')),
-    isRepo: existsSync(join(real, '.git')),
+    addable: repoDirs(real).length > 0,
     dirs,
   } satisfies BrowseResponse);
 });
@@ -174,10 +175,10 @@ app.get('/api/projects/:id/maps/:view', c => {
   let staleIds: string[] = [];
   let changed: string[] = [];
   if (map) {
-    const since = changedSince(project.path, map.commit);
+    const since = changedSince(project.path, map);
     if (since === null) {
       staleIds = map.nodes.map(n => n.id); // the map's commit is gone (rebased/reset): treat all as stale
-      changed = ['(the commit this map was made from no longer exists)'];
+      changed = ['(a commit this map was made from no longer exists)'];
     } else {
       changed = since;
       staleIds = staleNodeIds(map.nodes, since);

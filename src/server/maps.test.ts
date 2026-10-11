@@ -1,7 +1,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import type { MapNode } from '../shared/contracts.ts';
-import { generatorDecision, staleNodeIds, validateMap } from './maps.ts';
+import { execFileSync } from 'node:child_process';
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { changedSince, generatorDecision, repoDirs, repoFiles, staleNodeIds, validateMap } from './maps.ts';
 
 const node = (id: string, parent: string | null, files: string[] = []): MapNode =>
   ({ id, parent, label: id, kind: 'module', summary: '', files, fields: [] });
@@ -48,4 +52,33 @@ test('the generator may only read', () => {
   assert.equal(generatorDecision('Edit', { file_path: '/repo/a' }, P).bucket, 'deny');
   assert.equal(generatorDecision('Bash', { command: 'sudo systemctl restart docker' }, P).bucket, 'deny');
   assert.equal(generatorDecision('Bash', { command: 'cat a > b' }, P).bucket, 'deny'); // redirection writes a file
+});
+
+test('a folder of repositories is one project: files are prefixed per repo, changes tracked per repo', () => {
+  const root = mkdtempSync(join(tmpdir(), 'fd-multi-'));
+  const sh = (cwd: string, ...args: string[]) => execFileSync('git', args, { cwd, encoding: 'utf8' }).trim();
+  try {
+    for (const r of ['api', 'web']) {
+      mkdirSync(join(root, r));
+      writeFileSync(join(root, r, 'main.ts'), 'x');
+      sh(join(root, r), 'init', '-q', '-b', 'main');
+      sh(join(root, r), 'add', '.');
+      sh(join(root, r), '-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-qm', 'x');
+    }
+    mkdirSync(join(root, 'notes')); // not a repository: left out
+    writeFileSync(join(root, 'notes', 'n.md'), 'x');
+    writeFileSync(join(root, 'CLAUDE.md'), 'x');
+
+    assert.deepEqual(repoDirs(root), ['api', 'web']);
+    assert.deepEqual(repoFiles(root).sort(), ['CLAUDE.md', 'api/main.ts', 'web/main.ts']);
+
+    const commits = { api: sh(join(root, 'api'), 'rev-parse', 'HEAD'), web: sh(join(root, 'web'), 'rev-parse', 'HEAD') };
+    const map = { commit: null, commits, generatedAt: new Date(Date.now() + 60_000).toISOString() };
+    assert.deepEqual(changedSince(root, map), []);
+    writeFileSync(join(root, 'web', 'main.ts'), 'y');
+    assert.deepEqual(changedSince(root, map), ['web/main.ts']);
+    assert.equal(changedSince(root, { ...map, commits: { ...commits, api: 'f'.repeat(40) } }), null); // commit gone
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });

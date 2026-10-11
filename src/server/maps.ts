@@ -2,7 +2,7 @@
 // Flightdeck validates it and writes `.flightdeck/<view>.json` into the repo.
 import { spawn, execFileSync, type ChildProcess } from 'node:child_process';
 import { createInterface } from 'node:readline';
-import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -167,16 +167,72 @@ function git(cwd: string, args: string[]): string {
   }
 }
 
+// A project is one git repository, or a folder whose direct subfolders are repositories (an API, a
+// web app and a mobile app side by side). Returns the repositories relative to the project; [''] means
+// the project folder is itself the repository.
+export function repoDirs(path: string): string[] {
+  if (existsSync(join(path, '.git'))) return [''];
+  try {
+    return readdirSync(path, { withFileTypes: true })
+      .filter(e => !e.name.startsWith('.') && existsSync(join(path, e.name, '.git')))
+      .map(e => e.name)
+      .sort();
+  } catch {
+    return [];
+  }
+}
+const isSingleRepo = (path: string) => repoDirs(path)[0] === '';
+
+const lsFiles = (path: string) => git(path, ['ls-files', '-co', '--exclude-standard']).split('\n').filter(Boolean);
+
+// Files directly in a multi-repo folder (its shared CLAUDE.md, README…), outside every repository.
+function looseFiles(path: string): string[] {
+  return readdirSync(path, { withFileTypes: true }).filter(e => e.isFile() && !e.name.startsWith('.')).map(e => e.name);
+}
+
+// Every file in the project, relative to it. In a multi-repo folder: each repository's files under its
+// folder name, plus the loose top-level files. Other non-repository subfolders are left out.
 export function repoFiles(path: string): string[] {
-  return git(path, ['ls-files', '-co', '--exclude-standard']).split('\n').filter(Boolean);
+  if (isSingleRepo(path)) return lsFiles(path);
+  const files = looseFiles(path);
+  for (const r of repoDirs(path)) files.push(...lsFiles(join(path, r)).map(f => `${r}/${f}`));
+  return files;
 }
 
 function head(path: string): string | null {
   try { return git(path, ['rev-parse', 'HEAD']).trim(); } catch { return null; }
 }
 
-// Files changed since the map's commit, committed or not. `null` = the commit is gone.
-export function changedSince(path: string, commit: string | null): string[] | null {
+// What a map records to detect change later: HEAD, or each repository's HEAD in a multi-repo folder.
+function heads(path: string): { commit: string | null; commits?: Record<string, string> } {
+  if (isSingleRepo(path)) return { commit: head(path) };
+  const commits: Record<string, string> = {};
+  for (const r of repoDirs(path)) {
+    const h = head(join(path, r));
+    if (h) commits[r] = h;
+  }
+  return { commit: null, commits };
+}
+
+// Files changed since the map was made, committed or not. `null` = a commit it was made from is gone.
+export function changedSince(path: string, map: Pick<StoredMap, 'commit' | 'commits' | 'generatedAt'>): string[] | null {
+  if (!map.commits) return repoChangedSince(path, map.commit);
+  const out: string[] = [];
+  for (const r of repoDirs(path)) {
+    const commit = map.commits[r];
+    // A repository added (or first committed) since the map: everything in it is new.
+    if (!commit) { out.push(...lsFiles(join(path, r)).map(f => `${r}/${f}`)); continue; }
+    const since = repoChangedSince(join(path, r), commit);
+    if (since === null) return null;
+    out.push(...since.map(f => `${r}/${f}`));
+  }
+  // Loose top-level files have no git history; go by modification time.
+  const at = Date.parse(map.generatedAt);
+  out.push(...looseFiles(path).filter(f => statSync(join(path, f)).mtimeMs > at));
+  return out;
+}
+
+function repoChangedSince(path: string, commit: string | null): string[] | null {
   if (!commit) return null;
   try { git(path, ['cat-file', '-e', `${commit}^{commit}`]); } catch { return null; }
   const diff = git(path, ['diff', '--name-only', commit, '--']).split('\n');
@@ -236,10 +292,16 @@ export function startGeneration(project: { id: number; path: string; discussMode
     activity: 'Starting…', error: null, stopRequested: false,
   };
   jobs.set(project.id, job);
-  const commit = head(project.path);
+  const { commit, commits } = heads(project.path);
+  const repos = repoDirs(project.path);
+  // In a multi-repo folder git only works inside each repository; say so, or the agent starts with a
+  // `git ls-files` at the top that fails.
+  const layout = repos[0] === '' ? '' : `\n\nThis project is a folder of ${repos.length} separate git repositories: ${repos.join(', ')}. ` +
+    'Treat them as one system. git commands only work inside a repository, so explore with Glob, Grep, Read and ls; ' +
+    'file paths in the map are relative to this folder (e.g. `' + repos[0] + '/…`).';
 
   const args = [
-    '-p', `${COMMON}\n\n${VIEW_PROMPTS[view]}`,
+    '-p', `${COMMON}\n\n${VIEW_PROMPTS[view]}${layout}`,
     '--model', project.discussModel,
     '--output-format', 'stream-json', '--verbose',
     '--json-schema', JSON.stringify(mapJsonSchema()),
@@ -250,7 +312,9 @@ export function startGeneration(project: { id: number; path: string; discussMode
       }] }] },
     }),
   ];
-  const idx = scratchIndex(project.path);
+  // A scratch index is per repository; in a multi-repo folder there's no single one to copy, so git's
+  // optional index writes are switched off instead (that covers `git status`, the common case).
+  const idx = repos[0] === '' ? scratchIndex(project.path) : { env: { ...process.env, GIT_OPTIONAL_LOCKS: '0' }, done: () => {} };
   const env = idx.env;
   delete env.ANTHROPIC_API_KEY;
   delete env.ANTHROPIC_AUTH_TOKEN;
@@ -293,7 +357,7 @@ export function startGeneration(project: { id: number; path: string; discussMode
       const v = validateMap(gen.data, repoFiles(project.path));
       if (!v.ok) return fail(`map rejected: ${v.error}`);
       const stored: StoredMap = {
-        version: 1, view, generatedAt: now(), commit, model: project.discussModel,
+        version: 1, view, generatedAt: now(), commit, ...(commits ? { commits } : {}), model: project.discussModel,
         warnings: v.warnings, nodes: v.nodes, edges: v.edges,
       };
       mkdirSync(join(project.path, '.flightdeck'), { recursive: true });

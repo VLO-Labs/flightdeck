@@ -190,8 +190,8 @@ function AddProject({ onAdded }: { onAdded: (p: Project) => void }) {
   );
 }
 
-// Walks folders under the box's ~/dev (the server refuses anything outside it). Git repositories
-// can be chosen; other folders can only be opened.
+// Walks folders under the box's ~/dev (the server refuses anything outside it). A git repository, or
+// a folder of them, can be chosen; other folders can only be opened.
 function FolderBrowser({ onChoose }: { onChoose: (path: string) => void }) {
   const [at, setAt] = useState<BrowseResponse | null>(null);
   const [error, setError] = useState('');
@@ -201,13 +201,13 @@ function FolderBrowser({ onChoose }: { onChoose: (path: string) => void }) {
   return (
     <div className="browser">
       <div className="browser-path" title={at.path}>{at.path}</div>
-      {at.isRepo && <button type="button" className="small" onClick={() => onChoose(at.path)}>Choose this repository</button>}
+      {at.addable && <button type="button" className="small" onClick={() => onChoose(at.path)}>Choose this folder</button>}
       <div className="browser-list">
         {at.parent && <button type="button" className="browser-item" onClick={() => open(at.parent!)}>..</button>}
         {at.dirs.map(d => (
           <div key={d.path} className="browser-row">
             <button type="button" className="browser-item" onClick={() => open(d.path)}>{d.name}/</button>
-            {d.isRepo && <button type="button" className="small" onClick={() => onChoose(d.path)}>Choose</button>}
+            {d.addable && <button type="button" className="small" onClick={() => onChoose(d.path)}>Choose</button>}
           </div>
         ))}
         {at.dirs.length === 0 && <div className="muted">No folders here</div>}

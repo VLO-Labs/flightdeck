@@ -190,6 +190,7 @@ export const StoredMap = GeneratedMap.extend({
   view: MapViewId,
   generatedAt: z.string(),
   commit: z.string().nullable(), // HEAD when generated — the base for change detection
+  commits: z.record(z.string(), z.string()).optional(), // multi-repo folder: each repository's HEAD instead
   model: z.string(),
   warnings: z.array(z.string()),
 });
@@ -221,11 +222,11 @@ export const FileResponse = z.discriminatedUnion('kind', [
 ]);
 export type FileResponse = z.infer<typeof FileResponse>;
 
-// One folder in the "Add existing" browser: its subfolders, and which of them are git repositories.
+// One folder in the "Add existing" browser: its subfolders, and which of them can be added as projects.
 export const BrowseResponse = z.object({
   path: z.string(),
   parent: z.string().nullable(), // null at the browse root
-  isRepo: z.boolean(),
-  dirs: z.array(z.object({ name: z.string(), path: z.string(), isRepo: z.boolean() })),
+  addable: z.boolean(), // a git repository, or a folder whose direct subfolders are repositories
+  dirs: z.array(z.object({ name: z.string(), path: z.string(), addable: z.boolean() })),
 });
 export type BrowseResponse = z.infer<typeof BrowseResponse>;
