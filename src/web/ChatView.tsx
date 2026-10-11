@@ -1,144 +1,14 @@
 // One chat: the live feed (replayed, then streamed), approval cards, the composer, and the map
 // pane — attach nodes as context, watch the agent's reads and edits light the map up.
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { FeedItem, MAP_VIEWS, MODELS, type Chat, type MapViewId, type Project } from '../shared/contracts.ts';
+import { actState, derive, groupActivities, groupSummary, str, type Activity, type ActState, type Approval, type RateLimit } from './feedModel.ts';
 import { api } from './api.ts';
 import { Crumbs, MapCanvas, nodesForFile, type Heat } from './MapCanvas.tsx';
 import { useMap, type NodeRef } from './MapView.tsx';
-
-type Approval = Extract<FeedItem, { kind: 'approval' }>;
-type Activity = {
-  kind: 'activity'; key: string; runId: number; toolUseId: string; name: string; input: Record<string, unknown>;
-  result?: { text: string; isError: boolean }; approval?: Approval;
-};
-type Block =
-  | { kind: 'user'; key: string; text: string; tag?: string; context?: string[] }
-  | { kind: 'text'; key: string; text: string }
-  | Activity
-  | { kind: 'note'; key: string; text: string; tone: 'muted' | 'bad' | 'good' }
-  | { kind: 'approval'; key: string; approval: Approval };
-
-type RateLimit = { status?: string; resetsAt?: number; rateLimitType?: string };
-// touched: repo-relative paths the latest run read or edited — what lights up the map.
-type Derived = {
-  blocks: Block[]; partial: string; running: boolean; rateLimit?: RateLimit; model?: string;
-  touched: Map<string, Heat>;
-};
-
-const EDIT_TOOLS = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit']);
-const READ_TOOLS = new Set(['Read', 'Grep', 'Glob', 'LS']);
-
-const str = (v: unknown) => (typeof v === 'string' ? v : JSON.stringify(v));
-
-function toolResultText(content: unknown): string {
-  if (typeof content === 'string') return content;
-  if (Array.isArray(content)) return content.map(c => (c && typeof c === 'object' && 'text' in c ? String(c.text) : '')).join('\n');
-  return str(content);
-}
-
-// Fold the feed into what the screen shows. Pure: same items → same picture, live or replayed.
-function derive(items: FeedItem[], roots: string[]): Derived {
-  const blocks: Block[] = [];
-  const activities = new Map<string, Activity>();
-  const approvals = new Map<number, Approval>();
-  const approvalBlocks = new Map<number, { kind: 'approval'; key: string; approval: Approval }>();
-  let partial = '';
-  let running = false;
-  let rateLimit: RateLimit | undefined;
-  let model: string | undefined;
-  let lastRun = -1;
-
-  items.forEach((it, i) => {
-    const key = `${i}`;
-    if (it.kind === 'user') {
-      const label = MODELS.find(m => m.id === it.model)?.label ?? it.model;
-      const tag = it.mode ? `${it.mode === 'build' ? 'Build' : 'Discuss'}${label ? ` · ${label}` : ''}` : undefined;
-      blocks.push({ kind: 'user', key, text: it.text, tag, context: it.context?.map(c => c.label) });
-    } else if (it.kind === 'run') {
-      running = it.status === 'started';
-      if (it.status === 'started') lastRun = it.runId;
-      partial = '';
-      if (it.status === 'failed') blocks.push({ kind: 'note', key, tone: 'bad', text: `Run failed${it.detail ? `: ${it.detail}` : ''}` });
-      if (it.status === 'stopped') blocks.push({ kind: 'note', key, tone: 'muted', text: `Stopped${it.detail ? ` (${it.detail})` : ''}` });
-    } else if (it.kind === 'approval') {
-      approvals.set(it.approvalId, it);
-      const act = it.toolUseId ? activities.get(it.toolUseId) : undefined;
-      if (act) act.approval = it;
-      else {
-        const existing = approvalBlocks.get(it.approvalId);
-        if (existing) existing.approval = it;
-        else {
-          const b = { kind: 'approval' as const, key, approval: it };
-          approvalBlocks.set(it.approvalId, b);
-          blocks.push(b);
-        }
-      }
-    } else {
-      const ev = it.event as Record<string, any>;
-      if (ev.type === 'system' && ev.subtype === 'init') {
-        model = ev.model;
-      } else if (ev.type === 'stream_event') {
-        const d = ev.event?.delta;
-        if (ev.event?.type === 'content_block_delta' && d?.type === 'text_delta') partial += d.text;
-        if (ev.event?.type === 'message_start') partial = '';
-      } else if (ev.type === 'assistant') {
-        for (const c of ev.message?.content ?? []) {
-          if (c.type === 'text' && c.text?.trim()) {
-            blocks.push({ kind: 'text', key: `${key}-${c.id ?? blocks.length}`, text: c.text });
-            partial = '';
-          } else if (c.type === 'tool_use') {
-            const a: Activity = { kind: 'activity', key: `${key}-${c.id}`, runId: it.runId, toolUseId: c.id, name: c.name, input: c.input ?? {} };
-            // An approval can arrive before its tool_use in rare orderings; attach it either way.
-            for (const ap of approvals.values()) if (ap.toolUseId === c.id) a.approval = ap;
-            activities.set(c.id, a);
-            blocks.push(a);
-          }
-        }
-      } else if (ev.type === 'user') {
-        for (const c of ev.message?.content ?? []) {
-          if (c.type === 'tool_result') {
-            const a = activities.get(c.tool_use_id);
-            if (a) a.result = { text: toolResultText(c.content), isError: !!c.is_error };
-          }
-        }
-      } else if (ev.type === 'system' && ev.subtype === 'permission_denied') {
-        // Shown from the stream on purpose: the agent's own summary can misreport a refusal.
-        blocks.push({ kind: 'note', key, tone: 'bad', text: `Refused by Claude Code: ${ev.message ?? ev.tool_name}` });
-      } else if (ev.type === 'system' && ev.subtype === 'task_started' && ev.is_backgrounded) {
-        blocks.push({ kind: 'note', key, tone: 'muted', text: `Background task started: ${ev.description}` });
-      } else if (ev.type === 'rate_limit_event') {
-        rateLimit = ev.rate_limit_info;
-      } else if (ev.type === 'result') {
-        const secs = typeof ev.duration_ms === 'number' ? ` · ${(ev.duration_ms / 1000).toFixed(0)}s` : '';
-        // Judge by is_error, never by subtype.
-        if (ev.is_error) blocks.push({ kind: 'note', key, tone: 'bad', text: `Turn ended with an error (${ev.subtype})${secs}` });
-        else blocks.push({ kind: 'note', key, tone: 'muted', text: `Done${secs}` });
-      }
-    }
-  });
-  // What the latest run touched. An edit counts once it succeeded (or while it is still in
-  // flight); a refused or failed edit lights nothing.
-  const touched = new Map<string, Heat>();
-  const toRel = (p: unknown) => {
-    if (typeof p !== 'string') return undefined;
-    for (const r of roots) if (p === r) return ''; else if (p.startsWith(r + '/')) return p.slice(r.length + 1);
-    return undefined;
-  };
-  for (const b of blocks) {
-    if (b.kind !== 'activity' || b.runId !== lastRun) continue;
-    const rel = toRel(b.input.file_path ?? b.input.notebook_path ?? b.input.path);
-    if (rel === undefined) continue;
-    if (EDIT_TOOLS.has(b.name)) {
-      const ok = b.approval?.state !== 'denied' && !(b.result?.isError);
-      if (ok) touched.set(rel, 'edit');
-    } else if (READ_TOOLS.has(b.name) && touched.get(rel) !== 'edit') {
-      touched.set(rel, 'read');
-    }
-  }
-  return { blocks, partial, running, rateLimit, model, touched };
-}
+import { FileViewer } from './FileViewer.tsx';
 
 export function ChatView({ chat, project, onChanged, initialContext }: {
   chat: Chat; project: Project; onChanged: () => void; initialContext?: NodeRef[];
@@ -152,7 +22,11 @@ export function ChatView({ chat, project, onChanged, initialContext }: {
   const [cur, setCur] = useState(chat); // optimistic copy of the chat's mode/models
   useEffect(() => setCur(chat), [chat]);
   const bottom = useRef<HTMLDivElement>(null);
-  const stick = useRef(true);
+  const feed = useRef<HTMLDivElement>(null);
+  // Following the bottom, unless the reader scrolled up; then new output only raises a button.
+  const stick = useRef(scrollMemory.get(chat.id) == null);
+  const restored = useRef(false);
+  const [behind, setBehind] = useState(false);
 
   useEffect(() => {
     setItems([]);
@@ -182,10 +56,32 @@ export function ChatView({ chat, project, onChanged, initialContext }: {
   }, [chat.id, onChanged]);
 
   const d = useMemo(() => derive(items, [project.realPath, project.path]), [items, project.realPath, project.path]);
+  const rows = useMemo(() => groupActivities(d.blocks, d.ended), [d]);
+  const [openGroups, setOpenGroups] = useState<Set<string>>(new Set());
+  // A file Claude read or edited, opened in the code viewer (at a line when one is known).
+  const [viewing, setViewing] = useState<{ path: string; line?: number } | null>(null);
+  const openFile = (path: string, line?: number) => setViewing({ path, line });
+
+  // Coming back to a chat puts it where it was left; the first time, at the end.
+  useLayoutEffect(() => {
+    if (restored.current || items.length === 0 || !feed.current) return;
+    restored.current = true;
+    const saved = scrollMemory.get(chat.id);
+    if (saved != null) feed.current.scrollTop = saved;
+    else bottom.current?.scrollIntoView({ block: 'end' });
+  }, [items, chat.id]);
 
   useEffect(() => {
+    if (!restored.current) return;
     if (stick.current) bottom.current?.scrollIntoView({ block: 'end' });
+    else setBehind(true);
   }, [d]);
+  const toBottom = () => {
+    stick.current = true;
+    setBehind(false);
+    scrollMemory.delete(chat.id);
+    bottom.current?.scrollIntoView({ block: 'end' });
+  };
 
   const send = async () => {
     const text = draft.trim();
@@ -195,7 +91,7 @@ export function ChatView({ chat, project, onChanged, initialContext }: {
       await api.send(chat.id, text, ctx.map(c => ({ view: c.view, nodeId: c.nodeId })));
       setDraft('');
       setCtx([]);
-      stick.current = true;
+      toBottom();
     } catch (e) {
       setError((e as Error).message);
     }
@@ -246,36 +142,56 @@ export function ChatView({ chat, project, onChanged, initialContext }: {
         </div>
       </header>
 
+      <div className="feed-wrap">
       <div
         className="feed"
+        ref={feed}
         onScroll={e => {
           const el = e.currentTarget;
           stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+          if (stick.current) { setBehind(false); scrollMemory.delete(chat.id); }
+          else scrollMemory.set(chat.id, el.scrollTop);
         }}
       >
-        {d.blocks.map(b => {
+        {rows.map(r => {
+          if (r.kind === 'group') {
+            const open = openGroups.has(r.key);
+            return (
+              <div key={r.key} className="activity-group">
+                <button className="activity-group-head" onClick={() => setOpenGroups(s => toggled(s, r.key))} aria-expanded={open}>
+                  <span className="caret">{open ? '▾' : '▸'}</span>
+                  <span>{r.items.length} steps</span>
+                  <span className="muted">{groupSummary(r.items, d.ended)}</span>
+                </button>
+                {open && r.items.map(a => <ActivityLine key={a.key} a={a} state={actState(a, d.ended)} rel={rel} onOpenFile={openFile} />)}
+              </div>
+            );
+          }
+          const b = r.block;
           switch (b.kind) {
             case 'user':
               return (
                 <div key={b.key} className="msg user">
+                  <div className="msg-head">You{b.tag && <span className="muted"> · {b.tag}</span>}</div>
                   {b.context && <div className="chips">{b.context.map(l => <span key={l} className="chip">{l}</span>)}</div>}
-                  {b.text}
-                  {b.tag && <div className="msg-tag">{b.tag}</div>}
+                  <div className="msg-text">{b.text}</div>
                 </div>
               );
             case 'text':
-              return <div key={b.key} className="msg assistant"><Markdown remarkPlugins={[remarkGfm]}>{b.text}</Markdown></div>;
+              return <div key={b.key} className="msg assistant md"><Markdown remarkPlugins={[remarkGfm]}>{b.text}</Markdown></div>;
             case 'note':
               return <div key={b.key} className={`note ${b.tone}`}>{b.text}</div>;
             case 'approval':
               return <ApprovalCard key={b.key} a={b.approval} rel={rel} />;
             case 'activity':
-              return <ActivityLine key={b.key} a={b} rel={rel} />;
+              return <ActivityLine key={b.key} a={b} state={actState(b, d.ended)} rel={rel} onOpenFile={openFile} />;
           }
         })}
         {d.partial && <div className="msg assistant partial"><Markdown remarkPlugins={[remarkGfm]}>{d.partial}</Markdown></div>}
         {d.running && !d.partial && <div className="note muted working">Working…</div>}
         <div ref={bottom} />
+      </div>
+      {behind && <button className="small new-below" onClick={toBottom}>New activity ↓</button>}
       </div>
 
       <footer className="composer">
@@ -308,9 +224,20 @@ export function ChatView({ chat, project, onChanged, initialContext }: {
       </footer>
     </div>
     {showMap && <ChatMapPane project={project} ctx={ctx} onToggle={toggleCtx} touched={d.touched} live={d.running} />}
+    {viewing && (
+      <FileViewer
+        project={project} path={viewing.path} line={viewing.line}
+        onOpen={p => setViewing({ path: p })} onClose={() => setViewing(null)}
+      />
+    )}
     </div>
   );
 }
+
+// Where each chat was left, per chat id; absent = following the end. Lives for the page's lifetime.
+const scrollMemory = new Map<number, number>();
+
+const toggled = (s: Set<string>, k: string) => { const n = new Set(s); if (n.has(k)) n.delete(k); else n.add(k); return n; };
 
 // The map beside the chat: click a node to attach it to the next message; nodes light up as the
 // latest run reads (blue) or edits (amber) the files behind them.
@@ -350,6 +277,8 @@ function ChatMapPane({ project, ctx, onToggle, touched, live }: {
         {map
           ? <MapCanvas
               map={map} view={view} stale={stale} path={path} onPath={setPath} inContext={inContext} heat={heat}
+              // A narrow side pane, used to pick nodes: an overview matters more than full-size text.
+              minFitZoom={0.35}
               onSelect={id => {
                 const n = id ? map.nodes.find(x => x.id === id) : undefined;
                 if (n) onToggle({ view, nodeId: n.id, label: n.label });
@@ -384,31 +313,78 @@ function summary(name: string, input: Record<string, unknown>, rel: (p: unknown)
   }
 }
 
-function ActivityLine({ a, rel }: { a: Activity; rel: (p: unknown) => string }) {
+const STATE_LABEL: Record<ActState, string> = {
+  running: 'running', waiting: 'needs approval', done: '', failed: 'failed', denied: 'denied', cancelled: 'cancelled',
+};
+const RESULT_MAX = 20_000;
+
+function ActivityLine({ a, state, rel, onOpenFile }: {
+  a: Activity; state: ActState; rel: (p: unknown) => string; onOpenFile: (path: string, line?: number) => void;
+}) {
   const [open, setOpen] = useState(false);
   const ap = a.approval;
-  const denied = ap?.state === 'denied';
-  const state = denied ? 'bad' : a.result?.isError ? 'bad' : a.result ? 'good' : 'pending';
+  // A file inside the project can be opened in the viewer; Read gives the line it started at.
+  const filePath = a.input.file_path ?? a.input.notebook_path;
+  const relFile = typeof filePath === 'string' ? rel(filePath) : undefined;
+  const openable = relFile !== undefined && relFile !== filePath;
+  const line = a.name === 'Read' && typeof a.input.offset === 'number' ? a.input.offset : undefined;
   return (
-    <div className={`activity ${state}`}>
-      <button className="activity-line" onClick={() => setOpen(o => !o)}>
+    <div className={`activity st-${state}`}>
+      <div className="activity-line" role="button" tabIndex={0} aria-expanded={open}
+        onClick={() => setOpen(o => !o)} onKeyDown={e => (e.key === 'Enter' || e.key === ' ') && (e.preventDefault(), setOpen(o => !o))}>
         <span className="dot" />
-        <span className="activity-text">{summary(a.name, a.input, rel)}</span>
+        <span className="activity-text">
+          {openable
+            ? <>{a.name} <button className="link file-ref" onClick={e => { e.stopPropagation(); onOpenFile(relFile!, line); }}>{relFile}</button></>
+            : summary(a.name, a.input, rel)}
+        </span>
         {typeof a.input.description === 'string' && a.name === 'Bash' && <span className="activity-desc">{a.input.description}</span>}
-      </button>
+        {STATE_LABEL[state] && <span className={`state-tag st-${state}`}>{STATE_LABEL[state]}</span>}
+      </div>
       {ap && ap.state === 'pending' && <ApprovalCard a={ap} rel={rel} inline />}
-      {ap && ap.state !== 'pending' && ap.decidedBy !== 'rule' && (
+      {ap && ap.state !== 'pending' && (ap.decidedBy !== 'rule' || ap.state === 'denied') && (
         <div className={`decided ${ap.state}`}>{decidedText(ap)}</div>
       )}
-      {ap && ap.state === 'denied' && ap.decidedBy === 'rule' && <div className="decided denied">{decidedText(ap)}</div>}
       {open && (
         <div className="activity-detail">
-          <pre>{JSON.stringify(a.input, null, 2)}</pre>
-          {a.result && <pre className={a.result.isError ? 'bad' : ''}>{a.result.text.slice(0, 5000)}</pre>}
+          <ToolInput name={a.name} input={a.input} rel={rel} />
+          {a.result && (
+            <pre className={`tool-result ${a.result.isError ? 'bad' : ''}`}>
+              {a.result.text.slice(0, RESULT_MAX)}
+              {a.result.text.length > RESULT_MAX && `\n… ${(a.result.text.length - RESULT_MAX).toLocaleString()} more characters`}
+            </pre>
+          )}
+          {!a.result && state === 'cancelled' && <div className="muted">No result: the turn ended before this finished.</div>}
         </div>
       )}
     </div>
   );
+}
+
+// A tool's input, shown the way it reads best: a command as a command, an edit as before/after.
+function ToolInput({ name, input, rel }: { name: string; input: Record<string, unknown>; rel: (p: unknown) => string }) {
+  if (name === 'Bash' && typeof input.command === 'string') return <pre className="tool-cmd">$ {input.command}</pre>;
+  if (name === 'Edit' && typeof input.old_string === 'string' && typeof input.new_string === 'string') {
+    return (
+      <div className="tool-edit">
+        <div className="muted">{rel(input.file_path)}{input.replace_all ? ' · every occurrence' : ''}</div>
+        <pre className="diff">
+          {input.old_string.split('\n').map((l, i) => <div key={`o${i}`} className="del">- {l}</div>)}
+          {input.new_string.split('\n').map((l, i) => <div key={`n${i}`} className="add">+ {l}</div>)}
+        </pre>
+      </div>
+    );
+  }
+  if (name === 'Write' && typeof input.content === 'string') {
+    const lines = input.content.split('\n');
+    return (
+      <div className="tool-edit">
+        <div className="muted">{rel(input.file_path)} · {lines.length} lines</div>
+        <pre className="diff">{lines.slice(0, 80).map((l, i) => <div key={i} className="add">+ {l}</div>)}{lines.length > 80 && <div className="muted">… {lines.length - 80} more lines</div>}</pre>
+      </div>
+    );
+  }
+  return <pre className="tool-json">{JSON.stringify(input, null, 2)}</pre>;
 }
 
 function decidedText(ap: Approval): string {

@@ -1,6 +1,8 @@
 // Pure graph helpers behind the map canvas (no React, no CSS), so they can be tested directly.
 import type { MapEdge, MapNode, StoredMap } from '../shared/contracts.ts';
 
+export type Heat = 'read' | 'edit';
+
 export type LiftedEdge = { from: string; to: string; labels: string[]; twoWay: boolean };
 
 // Edges can join nodes at any depth; show each one between the visible ancestors of its ends.

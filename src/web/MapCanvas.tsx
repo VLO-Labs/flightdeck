@@ -9,13 +9,12 @@ import '@xyflow/react/dist/style.css';
 import ELK from 'elkjs/lib/elk.bundled.js';
 import type { ElkExtendedEdge } from 'elkjs/lib/elk-api.js';
 import type { MapNode, MapViewId, StoredMap } from '../shared/contracts.ts';
-import { liftEdges, type LiftedEdge } from './graph.ts';
+import { liftEdges, type Heat, type LiftedEdge } from './graph.ts';
 
-export { liftEdges, nodesForFile, type LiftedEdge } from './graph.ts';
+export { liftEdges, nodesForFile, type Heat, type LiftedEdge } from './graph.ts';
 
 const elk = new ELK();
 
-export type Heat = 'read' | 'edit';
 
 // ---------------------------------------------------------------------------------------------
 // Card geometry. Cards are drawn at exactly the height the layout used, so edges always meet
@@ -150,7 +149,7 @@ function InstanceRef({ into }: { into: { current: ReactFlowInstance<Node<CardDat
 const viewports = new Map<string, Viewport>();
 
 export function MapCanvas({
-  map, view, stale, path, onPath, selected, onSelect, inContext, heat, focus, remember, coveredRight = 0,
+  map, view, stale, path, onPath, selected, onSelect, inContext, heat, focus, remember, coveredRight = 0, minFitZoom = 0.55,
 }: {
   map: StoredMap;
   view: MapViewId;
@@ -164,6 +163,7 @@ export function MapCanvas({
   focus?: { id: string; seq: number } | null; // center this node (seq changes on each request)
   remember?: boolean; // keep each level's pan/zoom for when it's shown again (the Map screen)
   coveredRight?: number; // px of the canvas's right side covered by a panel while something is selected
+  minFitZoom?: number; // the initial fit never zooms out further than this (text stays readable)
 }) {
   const level = path.at(-1) ?? null;
   const levelKey = `${view}:${level ?? ''}`;
@@ -246,7 +246,7 @@ export function MapCanvas({
       const minX = Math.min(...bs.map(b => b.x)), minY = Math.min(...bs.map(b => b.y));
       const bw = Math.max(...bs.map(b => b.x + W)) - minX, bh = Math.max(...bs.map(b => b.y + b.height)) - minY;
       const pad = 24;
-      const zoom = Math.min(1, Math.max(0.55, Math.min((el.clientWidth - 2 * pad) / bw, (el.clientHeight - 2 * pad) / bh)));
+      const zoom = Math.min(1, Math.max(minFitZoom, Math.min((el.clientWidth - 2 * pad) / bw, (el.clientHeight - 2 * pad) / bh)));
       // Centered when it fits; otherwise start from the top-left, where the layout begins.
       const x = bw * zoom <= el.clientWidth - 2 * pad ? (el.clientWidth - bw * zoom) / 2 - minX * zoom : pad - minX * zoom;
       const y = bh * zoom <= el.clientHeight - 2 * pad ? (el.clientHeight - bh * zoom) / 2 - minY * zoom : pad - minY * zoom;
