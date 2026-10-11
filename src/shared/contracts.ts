@@ -148,6 +148,7 @@ export const FeedItem = z.discriminatedUnion('kind', [
     rule: z.string().optional(),
     reason: z.string().optional(),
     suggestedPattern: z.string().optional(),
+    note: z.string().optional(), // why this asks when a rule might suggest otherwise (e.g. Discuss mode)
   }),
 ]);
 export type FeedItem = z.infer<typeof FeedItem>;

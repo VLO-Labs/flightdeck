@@ -1,5 +1,6 @@
 // The PreToolUse hook: Claude Code calls this before every tool use and waits for the answer.
-// Order of decisions: edit lock → the project's rules → (Ask) an approval card you click.
+// Order of decisions: Discuss-mode edit refusal → edit lock → the project's rules (in Discuss, a shell
+// command only skips the card when every part is read-only) → (Ask) an approval card you click.
 import { and, eq } from 'drizzle-orm';
 import type { Decision, FeedItem, HookPayload } from '../shared/contracts.ts';
 import { config } from './config.ts';
@@ -7,6 +8,7 @@ import { db, approvals, projects, rules } from './db.ts';
 import * as feed from './feed.ts';
 import { EDIT_TOOLS, evaluate, suggestPattern } from './rules.ts';
 import { activeRunForSession } from './runner.ts';
+import { isReadOnlyShell } from '../shared/shell.ts';
 
 type Answer = { decision: 'allow' | 'deny'; reason: string };
 type ApprovalItem = Extract<FeedItem, { kind: 'approval' }>;
@@ -80,7 +82,15 @@ export async function decide(p: HookPayload): Promise<Answer> {
 
   // 2. The project's rules.
   const projectRules = db.select().from(rules).where(eq(rules.projectId, project.id)).all();
-  const verdict = evaluate(projectRules, p.tool_name, p.tool_input, project.path);
+  let verdict = evaluate(projectRules, p.tool_name, p.tool_input, project.path);
+  let note: string | undefined;
+
+  // Discuss mode is read-only in fact, not just by instruction: an allow rule waves a shell command
+  // through only when every command in it is known not to change anything. Otherwise you decide.
+  if (run.mode === 'discuss' && p.tool_name === 'Bash' && verdict.bucket === 'allow' && !isReadOnlyShell(String(p.tool_input.command ?? ''))) {
+    verdict = { bucket: 'ask' };
+    note = 'Discuss mode: this command may change files, so it asks even though a rule allows it.';
+  }
 
   if (verdict.bucket === 'allow') {
     record(run.runId, p, 'allowed', 'rule', verdict.rule?.pattern);
@@ -96,7 +106,7 @@ export async function decide(p: HookPayload): Promise<Answer> {
 
   // 3. Ask: show a card and hold Claude Code until you click (or the card times out).
   const row = record(run.runId, p, 'pending');
-  const item: ApprovalItem = { ...base, approvalId: row.id, suggestedPattern: suggestPattern(p.tool_name, p.tool_input) };
+  const item: ApprovalItem = { ...base, approvalId: row.id, suggestedPattern: suggestPattern(p.tool_name, p.tool_input), note };
   feed.append(run.chatId, item);
 
   const answer = await new Promise<Answer>(resolve => {

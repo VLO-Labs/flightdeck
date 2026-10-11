@@ -9,6 +9,9 @@
 // Precedence is Deny > Ask > Allow, and a call no rule matches is Ask.
 import { relative, isAbsolute } from 'node:path';
 import type { Bucket, NewRule } from '../shared/contracts.ts';
+import { HIDDEN_EXEC, isReadOnlyCommand, splitCommand, writesViaRedirect } from '../shared/shell.ts';
+
+export { isReadOnlyCommand, splitCommand } from '../shared/shell.ts';
 
 export const EDIT_TOOLS = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit']);
 
@@ -37,23 +40,6 @@ export function parsePattern(pattern: string): { tool: string; spec?: string } {
   const m = /^([^()]+?)(?:\((.*)\))?$/s.exec(pattern.trim());
   if (!m) return { tool: pattern.trim() };
   return { tool: m[1]!.trim(), spec: m[2]?.trim() };
-}
-
-// Split a shell command into the commands it actually runs. Naive about quoting on purpose:
-// over-splitting only produces fragments that match no Allow rule, which makes a call *stricter*.
-export function splitCommand(cmd: string): string[] {
-  // A lone `&` separates commands, but not inside redirections like `2>&1` or `&>`.
-  return cmd.split(/&&|\|\||;|\||(?<![>&])&(?![>&])|\n/).map(s => s.trim()).filter(Boolean);
-}
-
-// Constructs that hide a second command inside the first. A prefix rule must never wave these through.
-const HIDDEN_EXEC = /\$\(|`|<\(|>\(/;
-
-// Output redirection writes files (`cat a > b`), so an allow rule for the command must not cover it.
-// Redirections between streams or into /dev/null are harmless and stay allowed.
-function writesViaRedirect(cmd: string): boolean {
-  const harmless = cmd.replace(/\d?>>?\s*\/dev\/null|\d?>&\d|&>\s*\/dev\/null/g, '');
-  return />/.test(harmless);
 }
 
 function matchBashSpec(spec: string, command: string): boolean {

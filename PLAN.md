@@ -281,6 +281,10 @@ switched in its header between turns:
   the agent is told up front via `--append-system-prompt`, so it proposes instead of trying.
   Claude Code's own plan mode was not used: in headless runs its `ExitPlanMode` step would need
   an approval of its own.
+  Shell commands too (2026-10-11): in Discuss, an allow rule skips the card only when every
+  command in the line is known read-only (`src/shared/shell.ts`: `git status/diff/log/show`, `ls`,
+  `cat`, `grep`, `find` without `-exec`/`-delete`, …); anything else asks. This only tightens:
+  calls that would ask or be denied are unchanged.
 - **Build** — may change code, and so takes the project's edit lock.
 
 Both run in the **same session**, so flipping to Build keeps everything discussed ("go ahead"

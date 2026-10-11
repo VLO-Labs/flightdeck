@@ -161,9 +161,14 @@ pre.diff .del { color: var(--bad); } pre.diff .add { color: var(--good); }
 .card-title { font-weight: 600; }
 .card-tool { font-family: var(--mono); font-size: 12.5px; }
 .card-desc { color: var(--muted); }
+.card > pre, .card .tool-edit pre { margin: 0; background: var(--panel); border: 1px solid var(--card-line); border-radius: 6px; padding: 8px 10px; font-size: 12px; line-height: 1.5; }
+.card .tool-cmd, .card .tool-json { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 280px; overflow: auto; }
+.card-note { font-size: 12.5px; color: var(--warn); }
+.card-note code { font-family: var(--mono); font-size: 12px; display: block; margin-top: 2px; color: var(--text); overflow-wrap: anywhere; }
+.card-spacer { flex: 1; }
+.card-rule { display: flex; flex-direction: column; gap: 6px; font-size: 12.5px; }
+.card-rule label { display: flex; flex-direction: column; gap: 4px; }
 .card details summary { cursor: pointer; color: var(--muted); font-size: 12.5px; }
-.always { display: flex; gap: 6px; align-items: center; font-size: 12.5px; flex-wrap: wrap; }
-.always input[type="text"], .always input:not([type]) { font-family: var(--mono); font-size: 12px; flex: 1; min-width: 160px; }
 .card-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .card-actions input { flex: 1; min-width: 160px; }
 button.deny, button.stop { background: var(--bad); color: #fff; }
@@ -171,6 +176,12 @@ button.deny, button.stop { background: var(--bad); color: #fff; }
 .mode-toggle { display: inline-flex; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
 .mode-toggle button { background: none; color: var(--muted); border-radius: 0; padding: 4px 10px; }
 .mode-toggle button.on { background: var(--accent); color: var(--accent-text); }
+/* Build is the mode that changes code: it gets the warning colour, everywhere it shows. */
+.mode-toggle button.on.build { background: var(--warn); color: #1d1d1b; }
+.mode-line { width: 100%; font-size: 12px; color: var(--muted); }
+.mode-line strong { color: var(--accent); }
+.chat.mode-build .mode-line strong { color: var(--warn); }
+.chat.mode-build .composer { border-top: 2px solid var(--warn); }
 .model-defaults { display: flex; gap: 16px; flex-wrap: wrap; }
 .model-defaults label { display: flex; gap: 8px; align-items: center; }
 

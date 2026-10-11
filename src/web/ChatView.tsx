@@ -4,6 +4,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { FeedItem, MAP_VIEWS, MODELS, type Chat, type MapViewId, type Project } from '../shared/contracts.ts';
+import { splitCommand } from '../shared/shell.ts';
 import { actState, derive, groupActivities, groupSummary, str, type Activity, type ActState, type Approval, type RateLimit } from './feedModel.ts';
 import { api } from './api.ts';
 import { Crumbs, MapCanvas, nodesForFile, type Heat } from './MapCanvas.tsx';
@@ -107,15 +108,17 @@ export function ChatView({ chat, project, onChanged, initialContext }: {
 
   return (
     <div className="chat-split">
-    <div className="chat">
+    <div className={`chat mode-${cur.mode}`}>
       <header className="chat-header">
         <div className="chat-name">{chat.title}</div>
         <div className="chat-meta">
-          <div className="mode-toggle" title="Discuss: read, analyze, plan — edits are refused. Build: may change code.">
+          <div className="mode-toggle" role="radiogroup" aria-label="Mode" title="Discuss: read, analyze, plan — edits are refused. Build: may change code.">
             {(['discuss', 'build'] as const).map(m => (
               <button
                 key={m}
-                className={cur.mode === m ? 'on' : ''}
+                role="radio"
+                aria-checked={cur.mode === m}
+                className={cur.mode === m ? `on ${m}` : ''}
                 disabled={d.running}
                 onClick={async () => {
                   if (cur.mode === m) return;
@@ -163,7 +166,7 @@ export function ChatView({ chat, project, onChanged, initialContext }: {
                   <span>{r.items.length} steps</span>
                   <span className="muted">{groupSummary(r.items, d.ended)}</span>
                 </button>
-                {open && r.items.map(a => <ActivityLine key={a.key} a={a} state={actState(a, d.ended)} rel={rel} onOpenFile={openFile} />)}
+                {open && r.items.map(a => <ActivityLine key={a.key} a={a} state={actState(a, d.ended)} rel={rel} onOpenFile={openFile} mode={cur.mode} />)}
               </div>
             );
           }
@@ -182,9 +185,9 @@ export function ChatView({ chat, project, onChanged, initialContext }: {
             case 'note':
               return <div key={b.key} className={`note ${b.tone}`}>{b.text}</div>;
             case 'approval':
-              return <ApprovalCard key={b.key} a={b.approval} rel={rel} />;
+              return <ApprovalCard key={b.key} a={b.approval} rel={rel} mode={cur.mode} />;
             case 'activity':
-              return <ActivityLine key={b.key} a={b} state={actState(b, d.ended)} rel={rel} onOpenFile={openFile} />;
+              return <ActivityLine key={b.key} a={b} state={actState(b, d.ended)} rel={rel} onOpenFile={openFile} mode={cur.mode} />;
           }
         })}
         {d.partial && <div className="msg assistant partial"><Markdown remarkPlugins={[remarkGfm]}>{d.partial}</Markdown></div>}
@@ -195,6 +198,11 @@ export function ChatView({ chat, project, onChanged, initialContext }: {
       </div>
 
       <footer className="composer">
+        <div className="mode-line">
+          {cur.mode === 'build'
+            ? <><strong>Build</strong> — Claude may change files in this project (as your rules allow).</>
+            : <><strong>Discuss</strong> — read-only: Claude reads and proposes; edits are refused.</>}
+        </div>
         {error && <div className="error">{error}</div>}
         {ctx.length > 0 && (
           <div className="chips composer-chips">
@@ -318,8 +326,8 @@ const STATE_LABEL: Record<ActState, string> = {
 };
 const RESULT_MAX = 20_000;
 
-function ActivityLine({ a, state, rel, onOpenFile }: {
-  a: Activity; state: ActState; rel: (p: unknown) => string; onOpenFile: (path: string, line?: number) => void;
+function ActivityLine({ a, state, rel, onOpenFile, mode }: {
+  a: Activity; state: ActState; rel: (p: unknown) => string; onOpenFile: (path: string, line?: number) => void; mode: string;
 }) {
   const [open, setOpen] = useState(false);
   const ap = a.approval;
@@ -341,7 +349,7 @@ function ActivityLine({ a, state, rel, onOpenFile }: {
         {typeof a.input.description === 'string' && a.name === 'Bash' && <span className="activity-desc">{a.input.description}</span>}
         {STATE_LABEL[state] && <span className={`state-tag st-${state}`}>{STATE_LABEL[state]}</span>}
       </div>
-      {ap && ap.state === 'pending' && <ApprovalCard a={ap} rel={rel} inline />}
+      {ap && ap.state === 'pending' && <ApprovalCard a={ap} rel={rel} inline mode={mode} />}
       {ap && ap.state !== 'pending' && (ap.decidedBy !== 'rule' || ap.state === 'denied') && (
         <div className={`decided ${ap.state}`}>{decidedText(ap)}</div>
       )}
@@ -392,49 +400,96 @@ function decidedText(ap: Approval): string {
   return `${ap.state === 'allowed' ? 'Allowed' : 'Denied'} by ${who}${ap.reason && ap.state === 'denied' ? ` — ${ap.reason}` : ''}`;
 }
 
-function ApprovalCard({ a, rel, inline }: { a: Approval; rel: (p: unknown) => string; inline?: boolean }) {
+// What a card asks, in plain words.
+function askTitle(tool: string): string {
+  switch (tool) {
+    case 'Bash': return 'Run this command?';
+    case 'Edit': case 'MultiEdit': return 'Make this edit?';
+    case 'Write': return 'Write this file?';
+    case 'NotebookEdit': return 'Edit this notebook?';
+    case 'WebFetch': return 'Fetch this page?';
+    case 'WebSearch': return 'Search the web?';
+    default: return `Use ${tool}?`;
+  }
+}
+
+// What saving a pattern would cover, in words, and which parts of a compound command it would not.
+function ruleScope(pattern: string, a: Approval): { covers: string; notCovered: string[] } {
+  const m = /^Bash\((.*):\*\)$/.exec(pattern.trim());
+  if (m && a.toolName === 'Bash') {
+    const prefix = m[1]!;
+    const parts = splitCommand(String(a.toolInput.command ?? ''));
+    return {
+      covers: `commands starting with “${prefix}”`,
+      notCovered: parts.filter(p => p !== prefix && !p.startsWith(prefix + ' ')),
+    };
+  }
+  if (/^[A-Za-z]+$/.test(pattern.trim())) return { covers: `every ${pattern.trim()} call`, notCovered: [] };
+  return { covers: `calls matching ${pattern.trim()}`, notCovered: [] };
+}
+
+function ApprovalCard({ a, rel, inline, mode }: { a: Approval; rel: (p: unknown) => string; inline?: boolean; mode?: string }) {
   const [reason, setReason] = useState('');
   const [pattern, setPattern] = useState(a.suggestedPattern ?? a.toolName);
-  const [always, setAlways] = useState(false);
+  const [editingRule, setEditingRule] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
 
   if (a.state !== 'pending') {
     return inline ? null : <div className={`decided ${a.state}`}>{summary(a.toolName, a.toolInput, rel)} — {decidedText(a)}</div>;
   }
-  const go = async (decision: 'allow' | 'deny') => {
+  const go = async (decision: 'allow' | 'deny', save = false) => {
     setBusy(true);
     setError('');
     try {
       await api.decide(a.approvalId, {
         decision,
         reason: decision === 'deny' ? reason : undefined,
-        alwaysAllowPattern: decision === 'allow' && always ? pattern.trim() : undefined,
+        alwaysAllowPattern: decision === 'allow' && save ? pattern.trim() : undefined,
       });
     } catch (e) {
       setError((e as Error).message);
       setBusy(false);
     }
   };
+  const scope = ruleScope(pattern, a);
   return (
-    <div className="card">
-      <div className="card-title">Claude wants to run</div>
-      {!inline && <div className="card-tool">{summary(a.toolName, a.toolInput, rel)}</div>}
+    <div className="card" role="group" aria-label={askTitle(a.toolName)}>
+      <div className="card-title">{askTitle(a.toolName)}</div>
       {typeof a.toolInput.description === 'string' && <div className="card-desc">{a.toolInput.description}</div>}
-      <details>
-        <summary>Full request</summary>
-        <pre>{JSON.stringify(a.toolInput, null, 2)}</pre>
-      </details>
-      <label className="always">
-        <input type="checkbox" checked={always} onChange={e => setAlways(e.target.checked)} />
-        Always allow in this project:
-        <input value={pattern} onChange={e => setPattern(e.target.value)} disabled={!always} />
-      </label>
-      <div className="card-actions">
-        <button disabled={busy} onClick={() => go('allow')}>Allow</button>
-        <input placeholder="Reason (optional, Claude sees it)" value={reason} onChange={e => setReason(e.target.value)} />
-        <button className="deny" disabled={busy} onClick={() => go('deny')}>Deny</button>
-      </div>
+      {/* The whole request, always visible: nothing gets approved unseen. */}
+      <ToolInput name={a.toolName} input={a.toolInput} rel={rel} />
+      {a.note && <div className="card-note">{a.note}</div>}
+      {!editingRule ? (
+        <div className="card-actions">
+          <button disabled={busy} onClick={() => go('allow')} title="Allow this call only">Allow once</button>
+          <button className="ghost" disabled={busy} onClick={() => setEditingRule(true)} title="Save a rule so calls like this run without asking">Always allow…</button>
+          <span className="card-spacer" />
+          <input placeholder="Reason (optional, Claude sees it)" value={reason} onChange={e => setReason(e.target.value)} />
+          <button className="deny" disabled={busy} onClick={() => go('deny')}>Deny</button>
+        </div>
+      ) : (
+        <div className="card-rule">
+          <label>
+            Rule to save in this project's settings
+            <input className="mono" value={pattern} onChange={e => setPattern(e.target.value)} autoFocus />
+          </label>
+          <div className="muted">
+            From now on, {scope.covers} run without asking in this project{mode === 'discuss' ? ' (in Discuss mode, only when they can’t change files)' : ''}.
+            You can remove it in Project settings.
+          </div>
+          {scope.notCovered.length > 0 && (
+            <div className="card-note">
+              This rule doesn’t cover the rest of this command; those parts will still ask next time:
+              {scope.notCovered.map(p => <code key={p}>{p}</code>)}
+            </div>
+          )}
+          <div className="card-actions">
+            <button disabled={busy || !pattern.trim()} onClick={() => go('allow', true)}>Save rule and allow</button>
+            <button className="ghost" disabled={busy} onClick={() => setEditingRule(false)}>Back</button>
+          </div>
+        </div>
+      )}
       {error && <div className="error">{error}</div>}
     </div>
   );
