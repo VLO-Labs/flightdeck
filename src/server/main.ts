@@ -65,7 +65,9 @@ app.post('/api/projects', async c => {
   if (!isAbsolute(path) || !existsSync(path) || !statSync(path).isDirectory())
     return c.json({ error: `${path} doesn't exist on the box. Use "New project" to create one.` }, 400);
   if (!existsSync(`${path}/.git`)) return c.json({ error: `${path} is not a git repository` }, 400);
-  if (db.select().from(projects).where(eq(projects.path, path)).get())
+  // Compare resolved paths: ~/dev is a symlink, so one repo can be typed two ways.
+  const real = realpathSync(path);
+  if (db.select().from(projects).all().some(p => toProject(p).realPath === real))
     return c.json({ error: 'that folder is already a project' }, 400);
 
   return c.json(toProject(insertProject(body.data.name || basename(path), path)));
