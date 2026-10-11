@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { Chat, Project } from '../shared/contracts.ts';
+import type { BrowseResponse, Chat, Project } from '../shared/contracts.ts';
 import { api } from './api.ts';
 import { STACKS } from '../shared/stacks.ts';
 import { ChatView } from './ChatView.tsx';
@@ -166,6 +166,7 @@ function AddProject({ onAdded }: { onAdded: (p: Project) => void }) {
   const [path, setPath] = useState('/home/vlolabs/dev/');
   const [name, setName] = useState('');
   const [error, setError] = useState('');
+  const [browsing, setBrowsing] = useState(false);
   return (
     <form
       className="add-project"
@@ -180,10 +181,39 @@ function AddProject({ onAdded }: { onAdded: (p: Project) => void }) {
       }}
     >
       <input value={path} onChange={e => setPath(e.target.value)} placeholder="/home/vlolabs/dev/vlolabs/hq" />
+      <button type="button" className="small" onClick={() => setBrowsing(b => !b)}>{browsing ? 'Close browser' : 'Browse…'}</button>
+      {browsing && <FolderBrowser onChoose={p => { setPath(p); setBrowsing(false); }} />}
       <input value={name} onChange={e => setName(e.target.value)} placeholder="Name (defaults to folder)" />
       <button type="submit">Add</button>
       {error && <div className="error">{error}</div>}
     </form>
+  );
+}
+
+// Walks folders under the box's ~/dev (the server refuses anything outside it). Git repositories
+// can be chosen; other folders can only be opened.
+function FolderBrowser({ onChoose }: { onChoose: (path: string) => void }) {
+  const [at, setAt] = useState<BrowseResponse | null>(null);
+  const [error, setError] = useState('');
+  const open = (p?: string) => api.browse(p).then(r => { setAt(r); setError(''); }).catch(e => setError((e as Error).message));
+  useEffect(() => { open(); }, []);
+  if (!at) return error ? <div className="error">{error}</div> : null;
+  return (
+    <div className="browser">
+      <div className="browser-path" title={at.path}>{at.path}</div>
+      {at.isRepo && <button type="button" className="small" onClick={() => onChoose(at.path)}>Choose this repository</button>}
+      <div className="browser-list">
+        {at.parent && <button type="button" className="browser-item" onClick={() => open(at.parent!)}>..</button>}
+        {at.dirs.map(d => (
+          <div key={d.path} className="browser-row">
+            <button type="button" className="browser-item" onClick={() => open(d.path)}>{d.name}/</button>
+            {d.isRepo && <button type="button" className="small" onClick={() => onChoose(d.path)}>Choose</button>}
+          </div>
+        ))}
+        {at.dirs.length === 0 && <div className="muted">No folders here</div>}
+      </div>
+      {error && <div className="error">{error}</div>}
+    </div>
   );
 }
 

@@ -2,8 +2,10 @@
 // Flightdeck validates it and writes `.flightdeck/<view>.json` into the repo.
 import { spawn, execFileSync, type ChildProcess } from 'node:child_process';
 import { createInterface } from 'node:readline';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import {
   ClaudeEvent, GeneratedMap, StoredMap,
@@ -142,7 +144,28 @@ export function staleNodeIds(nodes: MapNode[], changed: string[]): string[] {
 // Git helpers
 // ---------------------------------------------------------------------------------------------
 
-const git = (cwd: string, args: string[]) => execFileSync('git', args, { cwd, encoding: 'utf8', maxBuffer: 64 << 20 });
+// Maps only read the repo, but `git diff <commit>` (and Claude's own git calls) still rewrite
+// .git/index to refresh its cache. Syncthing carries .git between the box and the Mac, so that write
+// can land on top of a commit made on the Mac. Everything here works on a scratch copy of the index
+// instead (GIT_INDEX_FILE); GIT_OPTIONAL_LOCKS=0 alone only covers `git status`.
+function scratchIndex(repo: string): { env: NodeJS.ProcessEnv; done: () => void } {
+  const file = join(tmpdir(), `flightdeck-index-${randomUUID()}`);
+  const real = join(repo, '.git', 'index');
+  if (existsSync(real)) copyFileSync(real, file);
+  return {
+    env: { ...process.env, GIT_INDEX_FILE: file, GIT_OPTIONAL_LOCKS: '0' },
+    done: () => rmSync(file, { force: true }),
+  };
+}
+
+function git(cwd: string, args: string[]): string {
+  const idx = scratchIndex(cwd);
+  try {
+    return execFileSync('git', args, { cwd, encoding: 'utf8', maxBuffer: 64 << 20, env: idx.env });
+  } finally {
+    idx.done();
+  }
+}
 
 export function repoFiles(path: string): string[] {
   return git(path, ['ls-files', '-co', '--exclude-standard']).split('\n').filter(Boolean);
@@ -227,11 +250,14 @@ export function startGeneration(project: { id: number; path: string; discussMode
       }] }] },
     }),
   ];
-  const env = { ...process.env };
+  const idx = scratchIndex(project.path);
+  const env = idx.env;
   delete env.ANTHROPIC_API_KEY;
   delete env.ANTHROPIC_AUTH_TOKEN;
   const proc = spawn(config.claudeBin, args, { cwd: project.path, env, stdio: ['ignore', 'pipe', 'pipe'] });
   job.proc = proc;
+  proc.on('close', idx.done);
+  proc.on('error', idx.done);
 
   const fail = (error: string) => {
     if (job.status === 'running') Object.assign(job, { status: 'failed', error, endedAt: now() });

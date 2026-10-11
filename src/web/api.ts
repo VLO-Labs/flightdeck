@@ -1,6 +1,6 @@
 // Thin typed client for the Flightdeck API. Responses are parsed with the shared contracts.
 import { z } from 'zod';
-import { Chat, FileResponse, MapResponse, Project, Rule, type Decision, type MapViewId, type Mode, type NewRule } from '../shared/contracts.ts';
+import { BrowseResponse, Chat, FileResponse, MapResponse, Project, Rule, type Decision, type MapViewId, type Mode, type NewRule } from '../shared/contracts.ts';
 
 async function call<T>(schema: z.ZodType<T>, method: string, url: string, body?: unknown): Promise<T> {
   const res = await fetch(url, {
@@ -16,6 +16,7 @@ const Ok = z.object({ ok: z.boolean() });
 
 export const api = {
   projects: () => call(z.array(Project), 'GET', '/api/projects'),
+  browse: (path?: string) => call(BrowseResponse, 'GET', `/api/browse${path ? `?path=${encodeURIComponent(path)}` : ''}`),
   addProject: (name: string, path: string) => call(Project, 'POST', '/api/projects', { name, path }),
   createProject: (body: { name: string; path: string; stack: string; description?: string }) =>
     call(z.object({ project: Project, chatId: z.number(), error: z.string().optional() }), 'POST', '/api/projects/new', body),

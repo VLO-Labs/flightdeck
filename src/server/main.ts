@@ -5,12 +5,12 @@ import { Hono } from 'hono';
 import { streamSSE } from 'hono/streaming';
 import { execFileSync } from 'node:child_process';
 import { randomUUID, timingSafeEqual } from 'node:crypto';
-import { existsSync, mkdirSync, realpathSync, statSync } from 'node:fs';
-import { basename, isAbsolute } from 'node:path';
+import { existsSync, mkdirSync, readdirSync, realpathSync, statSync } from 'node:fs';
+import { basename, isAbsolute, join, relative } from 'node:path';
 import { and, desc, eq } from 'drizzle-orm';
 import {
   ChatSettings, CreateProject, Decision, HookPayload, MapViewId, NewProject, NewRule, ProjectSettings, SendMessage,
-  type Chat, type MapResponse, type Project,
+  type BrowseResponse, type Chat, type MapResponse, type Project,
 } from '../shared/contracts.ts';
 import { config } from './config.ts';
 import { db, chats, projects, rules } from './db.ts';
@@ -68,6 +68,35 @@ app.post('/api/projects', async c => {
     return c.json({ error: 'that folder is already a project' }, 400);
 
   return c.json(toProject(insertProject(body.data.name || basename(path), path)));
+});
+
+// Folder browser for "Add existing", confined to config.browseRoot. Paths are checked after
+// resolving symlinks (~/dev itself is one), and shown in browse-root terms.
+app.get('/api/browse', c => {
+  let realRoot: string;
+  try { realRoot = realpathSync(config.browseRoot); } catch { return c.json({ error: `${config.browseRoot} doesn't exist` }, 500); }
+  const inside = (real: string) => real === realRoot || real.startsWith(realRoot + '/');
+  const asked = c.req.query('path') || config.browseRoot;
+  let real: string;
+  try { real = realpathSync(asked); } catch { return c.json({ error: `${asked} doesn't exist` }, 404); }
+  if (!inside(real) || !statSync(real).isDirectory()) return c.json({ error: `only folders under ${config.browseRoot} can be browsed` }, 403);
+
+  const shown = (r: string) => join(config.browseRoot, relative(realRoot, r));
+  const dirs: BrowseResponse['dirs'] = [];
+  for (const e of readdirSync(real, { withFileTypes: true })) {
+    if (e.name.startsWith('.') || e.name === 'node_modules' || e.name === 'vendor') continue;
+    let r: string;
+    try { r = realpathSync(join(real, e.name)); } catch { continue; }
+    if (!inside(r) || !statSync(r).isDirectory()) continue;
+    dirs.push({ name: e.name, path: shown(r), isRepo: existsSync(join(r, '.git')) });
+  }
+  dirs.sort((a, b) => a.name.localeCompare(b.name));
+  return c.json({
+    path: shown(real),
+    parent: real === realRoot ? null : shown(join(real, '..')),
+    isRepo: existsSync(join(real, '.git')),
+    dirs,
+  } satisfies BrowseResponse);
 });
 
 // A brand-new project: make the folder, `git init` it, and open a Build chat that scaffolds the

@@ -220,3 +220,12 @@ export const FileResponse = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('binary'), path: z.string(), size: z.number() }),
 ]);
 export type FileResponse = z.infer<typeof FileResponse>;
+
+// One folder in the "Add existing" browser: its subfolders, and which of them are git repositories.
+export const BrowseResponse = z.object({
+  path: z.string(),
+  parent: z.string().nullable(), // null at the browse root
+  isRepo: z.boolean(),
+  dirs: z.array(z.object({ name: z.string(), path: z.string(), isRepo: z.boolean() })),
+});
+export type BrowseResponse = z.infer<typeof BrowseResponse>;
