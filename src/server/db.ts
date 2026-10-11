@@ -12,6 +12,8 @@ export const projects = sqliteTable('projects', {
   path: text('path').notNull().unique(),
   discussModel: text('discuss_model').notNull(),
   buildModel: text('build_model').notNull(),
+  // Multi-repo folders: the repository (subfolder) whose .flightdeck/ keeps the maps; null = the folder itself.
+  mapsRepo: text('maps_repo'),
   createdAt: text('created_at').notNull(),
 });
 
@@ -96,6 +98,7 @@ addColumn('projects', `build_model TEXT NOT NULL DEFAULT '${config.defaultModel}
 addColumn('chats', `mode TEXT NOT NULL DEFAULT 'discuss'`);
 addColumn('chats', 'discuss_model TEXT');
 addColumn('chats', 'build_model TEXT');
+addColumn('projects', 'maps_repo TEXT');
 if (columns('chats').has('model')) sqlite.exec('ALTER TABLE chats DROP COLUMN model'); // superseded by per-mode models
 
 // A run left 'running' by a crash or restart can never finish; close it out on boot.

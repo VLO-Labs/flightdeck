@@ -2,10 +2,10 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import type { MapNode } from '../shared/contracts.ts';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { changedSince, generatorDecision, repoDirs, repoFiles, staleNodeIds, validateMap } from './maps.ts';
+import { basename, join } from 'node:path';
+import { changedSince, generatorDecision, mapsDir, moveMaps, repoDirs, repoFiles, staleNodeIds, validateMap } from './maps.ts';
 
 const node = (id: string, parent: string | null, files: string[] = []): MapNode =>
   ({ id, parent, label: id, kind: 'module', summary: '', files, fields: [] });
@@ -96,4 +96,23 @@ test('edge evidence is kept only when the cited file exists; the edge itself alw
   if (!r.ok) return;
   assert.deepEqual(r.edges.map(e => [e.label, e.evidence]), [['enqueues', 'src/api/orders.ts:42'], ['reports', undefined], ['pings', undefined]]);
   assert.ok(r.warnings.some(w => w.includes('inferred')));
+});
+
+test('a multi-repo folder can keep its maps in one repo; moving them keeps an existing map at the destination', () => {
+  const root = mkdtempSync(join(tmpdir(), 'fd-mapsdir-'));
+  try {
+    assert.equal(mapsDir({ path: root, mapsRepo: null }), join(root, '.flightdeck'));
+    const inRepo = mapsDir({ path: root, mapsRepo: 'api' });
+    assert.equal(inRepo, join(root, 'api', '.flightdeck', basename(root)));
+    mkdirSync(join(root, '.flightdeck'));
+    writeFileSync(join(root, '.flightdeck', 'architecture.json'), 'old-arch');
+    writeFileSync(join(root, '.flightdeck', 'flows.json'), 'old-flows');
+    mkdirSync(inRepo, { recursive: true });
+    writeFileSync(join(inRepo, 'flows.json'), 'kept');
+    assert.deepEqual(moveMaps(join(root, '.flightdeck'), inRepo), ['architecture']);
+    assert.equal(readFileSync(join(inRepo, 'architecture.json'), 'utf8'), 'old-arch');
+    assert.equal(readFileSync(join(inRepo, 'flows.json'), 'utf8'), 'kept');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });

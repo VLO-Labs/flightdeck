@@ -47,6 +47,35 @@ export function RulesView({ project, onProjectChanged }: { project: Project; onP
         ))}
       </div>
 
+      {project.repos.length > 0 && (
+        <>
+          <h3>Maps</h3>
+          <p className="muted">
+            This project is a folder of repositories. Its maps can live in the folder itself (outside git), or in one
+            of the repositories, so they're committed with it.
+          </p>
+          <label className="maps-repo">
+            Saved in
+            <select
+              value={project.mapsRepo ?? ''}
+              onChange={async e => {
+                setError('');
+                try {
+                  onProjectChanged(await api.projectSettings(project.id, {
+                    discussModel: project.discussModel, buildModel: project.buildModel, mapsRepo: e.target.value || null,
+                  }));
+                } catch (err) {
+                  setError((err as Error).message);
+                }
+              }}
+            >
+              <option value="">{project.name}/.flightdeck (not in git)</option>
+              {project.repos.map(r => <option key={r} value={r}>{r}/.flightdeck/{project.name}</option>)}
+            </select>
+          </label>
+        </>
+      )}
+
       <h3>Approval rules</h3>
       <p className="muted">
         Same syntax as Claude Code: <code>Read</code>, <code>Bash(npm test:*)</code>, <code>Bash(git push:*)</code>,{' '}

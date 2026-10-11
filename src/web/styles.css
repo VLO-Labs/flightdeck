@@ -200,6 +200,7 @@ button.deny, button.stop { background: var(--bad); color: #fff; }
 .chat.mode-build .composer { border-top: 2px solid var(--warn); }
 .model-defaults { display: flex; gap: 16px; flex-wrap: wrap; }
 .model-defaults label { display: flex; gap: 8px; align-items: center; }
+.maps-repo { display: flex; gap: 8px; align-items: center; }
 
 .composer {
   border-top: 1px solid var(--line); padding: 10px 16px; display: flex; gap: 8px; align-items: flex-end;

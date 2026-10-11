@@ -1,14 +1,14 @@
 // Maps: an agent reads the code (read-only) and returns a diagram as structured output;
-// Flightdeck validates it and writes `.flightdeck/<view>.json` into the repo.
+// Flightdeck validates it and writes `.flightdeck/<view>.json` into the repo (see mapsDir).
 import { spawn, execFileSync, type ChildProcess } from 'node:child_process';
 import { createInterface } from 'node:readline';
-import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import {
-  ClaudeEvent, GeneratedMap, StoredMap,
+  ClaudeEvent, GeneratedMap, MAP_VIEWS, StoredMap,
   type MapEdge, type MapJob, type MapNode, type MapViewId,
 } from '../shared/contracts.ts';
 import { config } from './config.ts';
@@ -268,10 +268,32 @@ function repoChangedSince(path: string, commit: string | null): string[] | null 
 // Stored maps
 // ---------------------------------------------------------------------------------------------
 
-const mapFile = (projectPath: string, view: MapViewId) => join(projectPath, '.flightdeck', `${view}.json`);
+// Where a project's maps live: <project>/.flightdeck/, or — for a multi-repo folder that keeps them
+// in one of its repositories, so they're under git — <project>/<repo>/.flightdeck/<folder name>/.
+// The extra folder keeps them apart from that repo's own maps if it's ever a project by itself.
+export function mapsDir(project: { path: string; mapsRepo: string | null }): string {
+  return project.mapsRepo
+    ? join(project.path, project.mapsRepo, '.flightdeck', basename(project.path))
+    : join(project.path, '.flightdeck');
+}
+const mapFile = (dir: string, view: MapViewId) => join(dir, `${view}.json`);
 
-export function readMap(projectPath: string, view: MapViewId): StoredMap | null {
-  const f = mapFile(projectPath, view);
+// Move a project's map files to a new place (when its mapsRepo setting changes). A view that
+// already has a map at the destination keeps that one. Returns the views moved.
+export function moveMaps(from: string, to: string): MapViewId[] {
+  const moved: MapViewId[] = [];
+  for (const { id } of MAP_VIEWS) {
+    const src = mapFile(from, id), dst = mapFile(to, id);
+    if (!existsSync(src) || existsSync(dst)) continue;
+    mkdirSync(to, { recursive: true });
+    renameSync(src, dst);
+    moved.push(id);
+  }
+  return moved;
+}
+
+export function readMap(dir: string, view: MapViewId): StoredMap | null {
+  const f = mapFile(dir, view);
   if (!existsSync(f)) return null;
   const parsed = StoredMap.safeParse(JSON.parse(readFileSync(f, 'utf8')));
   return parsed.success ? parsed.data : null;
@@ -307,7 +329,7 @@ function describe(name: string, input: Record<string, unknown>): string {
   return name;
 }
 
-export function startGeneration(project: { id: number; path: string; discussModel: string }, view: MapViewId):
+export function startGeneration(project: { id: number; path: string; discussModel: string; mapsRepo: string | null }, view: MapViewId):
   { ok: true } | { ok: false; error: string } {
   if (jobs.get(project.id)?.status === 'running') return { ok: false, error: 'a map is already being generated for this project' };
 
@@ -384,8 +406,8 @@ export function startGeneration(project: { id: number; path: string; discussMode
         version: 1, view, generatedAt: now(), commit, ...(commits ? { commits } : {}), model: project.discussModel,
         warnings: v.warnings, nodes: v.nodes, edges: v.edges,
       };
-      mkdirSync(join(project.path, '.flightdeck'), { recursive: true });
-      writeFileSync(mapFile(project.path, view), JSON.stringify(stored, null, 2) + '\n');
+      mkdirSync(mapsDir(project), { recursive: true });
+      writeFileSync(mapFile(mapsDir(project), view), JSON.stringify(stored, null, 2) + '\n');
       Object.assign(job, { status: 'done', endedAt: now(), activity: `Mapped ${v.nodes.length} nodes` });
       setTimeout(() => proc.exitCode === null && proc.kill('SIGINT'), 2000);
     }

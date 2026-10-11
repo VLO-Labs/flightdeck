@@ -33,6 +33,8 @@ export const Project = z.object({
   realPath: z.string(), // path with symlinks resolved — what Claude Code reports in tool calls
   discussModel: z.string(), // the project's default for Discuss turns
   buildModel: z.string(), // …and for Build turns
+  mapsRepo: z.string().nullable(), // multi-repo folder: the repo whose .flightdeck/ keeps the maps (null = the folder)
+  repos: z.array(z.string()), // multi-repo folder: its repositories; empty for a single repo
   createdAt: z.string(),
 });
 export type Project = z.infer<typeof Project>;
@@ -44,7 +46,11 @@ export const CreateProject = z.object({
   stack: z.enum(STACK_IDS),
   description: z.string().optional(),
 });
-export const ProjectSettings = z.object({ discussModel: z.string().min(1), buildModel: z.string().min(1) });
+export const ProjectSettings = z.object({
+  discussModel: z.string().min(1),
+  buildModel: z.string().min(1),
+  mapsRepo: z.string().nullable().optional(),
+});
 
 // Discuss: read, analyze, propose — edits are refused. Build: may change code (takes the edit lock).
 export const Mode = z.enum(['discuss', 'build']);

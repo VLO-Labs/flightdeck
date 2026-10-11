@@ -18,7 +18,7 @@ import * as feed from './feed.ts';
 import { decide, hookResponse, lockHolder, resolveApproval } from './hook.ts';
 import { effectiveModel, isRunning, startTurn, stopTurn } from './runner.ts';
 import { TEMPLATE_RULES } from './rules.ts';
-import { changedSince, generatorDecision, jobFor, jobForSession, readMap, repoDirs, staleNodeIds, startGeneration, stopGeneration } from './maps.ts';
+import { changedSince, generatorDecision, jobFor, jobForSession, mapsDir, moveMaps, readMap, repoDirs, staleNodeIds, startGeneration, stopGeneration } from './maps.ts';
 import { viewFile } from './files.ts';
 import { refuseLocal } from './guard.ts';
 import { STACKS, scaffoldPrompt } from '../shared/stacks.ts';
@@ -53,7 +53,8 @@ app.post('/hook/map', async c => {
 function toProject(row: typeof projects.$inferSelect): Project {
   let realPath = row.path;
   try { realPath = realpathSync(row.path); } catch { /* folder gone; keep the configured path */ }
-  return { ...row, realPath };
+  const repos = repoDirs(row.path).filter(r => r !== '');
+  return { ...row, realPath, repos };
 }
 
 app.get('/api/projects', c => c.json(db.select().from(projects).all().map(toProject)));
@@ -163,8 +164,18 @@ function insertProject(name: string, path: string) {
 app.post('/api/projects/:id/settings', async c => {
   const body = ProjectSettings.safeParse(await c.req.json());
   if (!body.success) return c.json({ error: 'both models are required' }, 400);
-  const row = db.update(projects).set(body.data).where(eq(projects.id, Number(c.req.param('id')))).returning().get();
-  return row ? c.json(toProject(row)) : c.json({ error: 'no such project' }, 404);
+  const project = projectById(c.req.param('id'));
+  if (!project) return c.json({ error: 'no such project' }, 404);
+  const { mapsRepo, ...models } = body.data;
+  if (mapsRepo !== undefined && mapsRepo !== project.mapsRepo) {
+    if (mapsRepo !== null && !repoDirs(project.path).filter(r => r !== '').includes(mapsRepo))
+      return c.json({ error: `${mapsRepo} is not one of this project's repositories` }, 400);
+    if (jobFor(project.id)?.status === 'running') return c.json({ error: 'wait for the map being generated to finish' }, 409);
+    moveMaps(mapsDir(project), mapsDir({ path: project.path, mapsRepo }));
+  }
+  const row = db.update(projects).set({ ...models, ...(mapsRepo !== undefined ? { mapsRepo } : {}) })
+    .where(eq(projects.id, project.id)).returning().get();
+  return c.json(toProject(row!));
 });
 
 // --- Maps ---------------------------------------------------------------------------------------
@@ -174,7 +185,7 @@ app.get('/api/projects/:id/maps/:view', c => {
   const project = projectById(c.req.param('id'));
   const view = MapViewId.safeParse(c.req.param('view'));
   if (!project || !view.success) return c.json({ error: 'not found' }, 404);
-  const map = readMap(project.path, view.data);
+  const map = readMap(mapsDir(project), view.data);
   let staleIds: string[] = [];
   let changed: string[] = [];
   let baseMissing = false;
@@ -265,7 +276,7 @@ app.post('/api/chats/:id/messages', async c => {
   const project = chat && db.select().from(projects).where(eq(projects.id, chat.projectId)).get();
   for (const ref of body.data.context ?? []) {
     const view = MapViewId.safeParse(ref.view);
-    const node = project && view.success ? readMap(project.path, view.data)?.nodes.find(n => n.id === ref.nodeId) : undefined;
+    const node = project && view.success ? readMap(mapsDir(project), view.data)?.nodes.find(n => n.id === ref.nodeId) : undefined;
     if (!node || !view.success) return c.json({ error: `map node ${ref.view}/${ref.nodeId} not found — refresh the map` }, 400);
     context.push({ view: view.data, nodeId: node.id, label: node.label, kind: node.kind, summary: node.summary, files: node.files });
   }
