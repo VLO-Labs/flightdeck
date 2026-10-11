@@ -62,6 +62,8 @@ app.post('/api/projects', async c => {
   if (!body.success) return c.json({ error: 'name and path are required' }, 400);
   const { path } = body.data;
   if (isAbsolute(path) && !underBrowseRoot(path)) return c.json({ error: outsideRoot() }, 400);
+  if (isAbsolute(path) && existsSync(path) && existsSync(config.browseRoot) && realpathSync(path) === realpathSync(config.browseRoot))
+    return c.json({ error: `${config.browseRoot} itself can't be a project; pick a folder inside it` }, 400);
   if (!isAbsolute(path) || !existsSync(path) || !statSync(path).isDirectory())
     return c.json({ error: `${path} doesn't exist on the box. Use "New project" to create one.` }, 400);
   if (repoDirs(path).length === 0)
@@ -114,7 +116,7 @@ app.get('/api/browse', c => {
   return c.json({
     path: shown(real),
     parent: real === realRoot ? null : shown(join(real, '..')),
-    addable: repoDirs(real).length > 0,
+    addable: real !== realRoot && repoDirs(real).length > 0, // ~/dev itself is never one project
     dirs,
   } satisfies BrowseResponse);
 });
