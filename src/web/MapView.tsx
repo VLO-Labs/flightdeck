@@ -5,6 +5,7 @@ import { MAP_VIEWS, type MapResponse, type MapViewId, type Project } from '../sh
 import { api } from './api.ts';
 import { FileViewer, type MapPlace } from './FileViewer.tsx';
 import { Crumbs, MapCanvas, liftEdges, nodesForFile } from './MapCanvas.tsx';
+import type { EdgePart } from './graph.ts';
 
 // The details panel's width; it floats over the canvas, which pans selected cards out from under it.
 const PANEL_W = 340;
@@ -34,9 +35,18 @@ export function MapView({ project, onAskInChat }: { project: Project; onAskInCha
   const [path, setPath] = useState<string[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
   const [file, setFile] = useState<string | null>(null);
+  const [fileLine, setFileLine] = useState<number | undefined>();
+  const openFile = (f: string | null, line?: number) => { setFile(f); setFileLine(line); };
   const [focus, setFocus] = useState<{ id: string; seq: number } | null>(null);
 
   useEffect(() => { setPath([]); setSelected(null); }, [project.id, view]);
+  // A refreshed map can drop or rename nodes: keep the reader's place as far as it still exists.
+  useEffect(() => {
+    if (!data?.map) return;
+    const ids = new Set(data.map.nodes.map(n => n.id));
+    setPath(p => { const i = p.findIndex(id => !ids.has(id)); return i === -1 ? p : p.slice(0, i); });
+    setSelected(s => (s && ids.has(s) ? s : null));
+  }, [data?.map?.generatedAt]);
 
   const map = data?.map ?? null;
   const running = data?.job?.status === 'running';
@@ -48,11 +58,11 @@ export function MapView({ project, onAskInChat }: { project: Project; onAskInCha
   const links = useMemo(() => {
     if (!map || !sel) return { uses: [], usedBy: [], both: [] };
     const lifted = liftEdges(map.nodes, map.edges, path.at(-1) ?? null);
-    const row = (other: string, labels: string[], twoWay: boolean) => ({ id: other, label: byId.get(other)?.label ?? other, labels, twoWay });
+    const row = (other: string, parts: EdgePart[], twoWay: boolean) => ({ id: other, label: byId.get(other)?.label ?? other, parts, twoWay });
     return {
-      uses: lifted.filter(e => e.from === sel.id && !e.twoWay).map(e => row(e.to, e.labels, false)),
-      usedBy: lifted.filter(e => e.to === sel.id && !e.twoWay).map(e => row(e.from, e.labels, false)),
-      both: lifted.filter(e => e.twoWay && (e.from === sel.id || e.to === sel.id)).map(e => row(e.from === sel.id ? e.to : e.from, e.labels, true)),
+      uses: lifted.filter(e => e.from === sel.id && !e.twoWay).map(e => row(e.to, e.parts, false)),
+      usedBy: lifted.filter(e => e.to === sel.id && !e.twoWay).map(e => row(e.from, e.parts, false)),
+      both: lifted.filter(e => e.twoWay && (e.from === sel.id || e.to === sel.id)).map(e => row(e.from === sel.id ? e.to : e.from, e.parts, true)),
     };
   }, [map, sel, path, byId]);
   const goTo = (id: string) => { setSelected(id); setFocus(f => ({ id, seq: (f?.seq ?? 0) + 1 })); };
@@ -100,9 +110,14 @@ export function MapView({ project, onAskInChat }: { project: Project; onAskInCha
               {map.warnings.length > 0 && ` · ${map.warnings.length} warning(s)`}
             </span>
           )}
-          {map && data && data.changedFiles.length > 0 && (
-            <span className="badge warn" title={data.changedFiles.slice(0, 30).join('\n')}>
-              {data.changedFiles.length} file(s) changed since — {stale.size} node(s) affected
+          {map && data?.baseMissing && (
+            <span className="badge warn" title="The commit this map was made from no longer exists (rebased or reset), so what changed can't be told">
+              Map's base commit is gone · refresh to be sure
+            </span>
+          )}
+          {map && data && !data.baseMissing && data.changedFiles.length > 0 && (
+            <span className="badge warn" title={`Changed since the map was made:\n${data.changedFiles.slice(0, 30).join('\n')}${data.changedFiles.length > 30 ? '\n…' : ''}`}>
+              {changeSummary(data.changedFiles.length, stale.size)}
             </span>
           )}
           {running
@@ -114,8 +129,10 @@ export function MapView({ project, onAskInChat }: { project: Project; onAskInCha
       {job && job.view === view && job.status !== 'done' && (
         <div className={`job-line ${job.status}`}>
           {job.status === 'running' && <>Mapping… {job.steps} step(s) · <span className="mono">{job.activity}</span></>}
-          {job.status === 'failed' && <>Mapping failed: {job.error}</>}
-          {job.status === 'stopped' && <>Mapping stopped.</>}
+          {job.status === 'failed' && (
+            <>Mapping failed: {job.error} {map && 'The previous map is still shown.'} <button className="small" onClick={generate}>Try again</button></>
+          )}
+          {job.status === 'stopped' && <>Mapping stopped.{map && ' The previous map is still shown.'}</>}
         </div>
       )}
       {job && job.view !== view && job.status === 'running' && (
@@ -166,34 +183,61 @@ export function MapView({ project, onAskInChat }: { project: Project; onAskInCha
             {(links.uses.length > 0 || links.usedBy.length > 0 || links.both.length > 0) && (
               <>
                 {links.uses.length > 0 && <div className="label"><span className="dir-out">→</span> Uses</div>}
-                {links.uses.map(l => <LinkRow key={`u${l.id}`} l={l} onGo={goTo} />)}
+                {links.uses.map(l => <LinkRow key={`u${l.id}`} l={l} onGo={goTo} onOpen={openFile} />)}
                 {links.usedBy.length > 0 && <div className="label"><span className="dir-in">←</span> Used by</div>}
-                {links.usedBy.map(l => <LinkRow key={`b${l.id}`} l={l} onGo={goTo} />)}
+                {links.usedBy.map(l => <LinkRow key={`b${l.id}`} l={l} onGo={goTo} onOpen={openFile} />)}
                 {links.both.length > 0 && <div className="label"><span className="dir-out">⇄</span> Both ways</div>}
-                {links.both.map(l => <LinkRow key={`w${l.id}`} l={l} onGo={goTo} />)}
+                {links.both.map(l => <LinkRow key={`w${l.id}`} l={l} onGo={goTo} onOpen={openFile} />)}
               </>
             )}
             <div className="label">Files</div>
             {sel.files.length === 0 && <div className="muted">None recorded.</div>}
             {sel.files.map(f => (
-              <button key={f} className="link mono file-link" onClick={() => setFile(f)}>{f}</button>
+              <button key={f} className="link mono file-link" onClick={() => openFile(f)}>{f}</button>
             ))}
+            <p className="panel-foot muted">
+              Boxes, files and connections come from Claude reading the code; files are checked to exist. Descriptions are its summary.
+            </p>
           </aside>
         )}
       </div>
 
       {file !== null && (
-        <FileViewer project={project} path={file} places={places} onOpen={setFile} onClose={() => setFile(null)} onShowOnMap={showOnMap} />
+        <FileViewer project={project} path={file} line={fileLine} places={places} onOpen={f => openFile(f)} onClose={() => openFile(null)} onShowOnMap={showOnMap} />
       )}
     </div>
   );
 }
 
-function LinkRow({ l, onGo }: { l: { id: string; label: string; labels: string[]; twoWay: boolean }; onGo: (id: string) => void }) {
+// One connection: the other node (click to go there) and what flows, each part marked by whether
+// the map cites the code for it ("seen in code", opens the file) or it's the model's inference.
+function LinkRow({ l, onGo, onOpen }: {
+  l: { id: string; label: string; parts: EdgePart[]; twoWay: boolean };
+  onGo: (id: string) => void;
+  onOpen: (file: string, line?: number) => void;
+}) {
   return (
-    <button className="link-row" onClick={() => onGo(l.id)} title={l.labels.join('\n')}>
-      <span className="link-row-name">{l.label}</span>
-      {l.labels.length > 0 && <span className="link-row-what">{l.labels.join(' · ')}</span>}
-    </button>
+    <div className="link-row">
+      <button className="link-row-name" onClick={() => onGo(l.id)} title="Go to this on the map">{l.label}</button>
+      {l.parts.map((p, i) => {
+        const m = p.evidence ? /^(.*?)(?::(\d+))?$/.exec(p.evidence) : null;
+        return (
+          <div key={i} className="link-part">
+            <span className="link-row-what">{p.label || '—'}</span>
+            {m
+              ? <button className="link evidence" title={p.evidence} onClick={() => onOpen(m[1]!, m[2] ? Number(m[2]) : undefined)}>seen in code</button>
+              : <span className="inferred" title="The map doesn't cite the code for this; it's Claude's reading of the project">inferred</span>}
+          </div>
+        );
+      })}
+    </div>
   );
+}
+
+const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
+
+// The change badge: a changed file means a box *may* be outdated, not that it is.
+function changeSummary(files: number, boxes: number): string {
+  if (boxes === 0) return `${plural(files, 'file')} changed since this map, none inside a mapped box`;
+  return `${plural(files, 'file')} changed since this map · ${plural(boxes, 'box', 'boxes')} may be outdated`;
 }

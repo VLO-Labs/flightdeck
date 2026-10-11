@@ -36,13 +36,19 @@ that matters. Then return the map through the structured output. Rules:
   Prefer the narrowest directory that covers the node.
 - edges: from/to are node ids at ANY level; label says what flows ("HTTP /api/orders",
   "enqueues SendEmail", "reads users"). Connect the most specific nodes that are accurate; the
-  viewer lifts edges to whatever level is on screen.
+  viewer lifts edges to whatever level is on screen. evidence: the repo-relative file where the
+  code makes this call/read/write, with a line when you saw it ("src/api/client.ts:42"). Omit it
+  rather than guess: an edge without evidence is shown to the reader as inferred.
 - fields: an empty array unless the view below says otherwise.`;
 
 const VIEW_PROMPTS: Record<MapViewId, string> = {
   architecture: `VIEW: ARCHITECTURE. Nodes are the system's runtime and structural parts: apps and services,
 workers, UIs, modules, data stores, queues, caches, and the external services/APIs it calls.
-kind is one of: app, service, worker, ui, module, datastore, queue, external, library.
+kind is one of: app, service, worker, ui, module, datastore, queue, external, library —
+ui: a web front-end; app: a mobile, desktop or CLI application; service: a server process that
+answers requests; worker: a process that runs jobs or schedules; module: an internal part of an
+app or service; library: shared code packaged for reuse; datastore: a database, file store or
+cache; queue: a message queue or job table; external: anything not in this repository.
 For external services, files = where they are called from. Edges are calls, reads/writes,
 publishes/consumes.`,
   'data-model': `VIEW: DATA MODEL. Nodes are persisted entities — tables, collections, models — with kind
@@ -117,13 +123,23 @@ export function validateMap(gen: { nodes: MapNode[]; edges: MapEdge[] }, repoFil
   if (dropped) warnings.push(`${dropped} file reference(s) did not exist in the repo and were dropped`);
 
   const seenEdges = new Set<string>();
-  const edges = gen.edges.filter(e => {
+  const kept = gen.edges.filter(e => {
     const key = `${e.from}→${e.to}→${e.label}`;
     const ok = byId.has(e.from) && byId.has(e.to) && e.from !== e.to && !seenEdges.has(key);
     seenEdges.add(key);
     return ok;
   });
-  if (edges.length < gen.edges.length) warnings.push(`${gen.edges.length - edges.length} edge(s) pointed at unknown nodes or repeated and were dropped`);
+  if (kept.length < gen.edges.length) warnings.push(`${gen.edges.length - kept.length} edge(s) pointed at unknown nodes or repeated and were dropped`);
+  // Evidence must point at a real file; otherwise the edge stays, marked as inferred.
+  let unproven = 0;
+  const edges = kept.map(({ evidence, ...e }) => {
+    const ev = evidence?.trim().replace(/^\.\//, '').replace(/^\/+/, '');
+    const m = ev ? /^(.*?)(?::(\d+))?$/.exec(ev) : null;
+    if (m && files.has(m[1]!)) return { ...e, evidence: m[2] ? `${m[1]}:${m[2]}` : m[1] };
+    if (ev) unproven++;
+    return e;
+  });
+  if (unproven) warnings.push(`${unproven} edge citation(s) named files that don't exist; those edges are shown as inferred`);
 
   return { ok: true, nodes, edges, warnings };
 }

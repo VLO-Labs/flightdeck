@@ -176,18 +176,19 @@ app.get('/api/projects/:id/maps/:view', c => {
   const map = readMap(project.path, view.data);
   let staleIds: string[] = [];
   let changed: string[] = [];
+  let baseMissing = false;
   if (map) {
     const since = changedSince(project.path, map);
     if (since === null) {
-      staleIds = map.nodes.map(n => n.id); // the map's commit is gone (rebased/reset): treat all as stale
-      changed = ['(a commit this map was made from no longer exists)'];
+      staleIds = map.nodes.map(n => n.id); // the map's commit is gone (rebased/reset): any box may be outdated
+      baseMissing = true;
     } else {
       changed = since;
       staleIds = staleNodeIds(map.nodes, since);
     }
   }
   const job = jobFor(project.id);
-  const body: MapResponse = { map, staleNodeIds: staleIds, changedFiles: changed, job: job?.view === view.data ? job : job?.status === 'running' ? job : null };
+  const body: MapResponse = { map, staleNodeIds: staleIds, changedFiles: changed, baseMissing, job: job?.view === view.data ? job : job?.status === 'running' ? job : null };
   return c.json(body);
 });
 

@@ -285,7 +285,13 @@ table.fields td { padding: 2px 8px 2px 0; vertical-align: top; }
   background: none; color: var(--text); border: 1px solid transparent; border-radius: 6px; padding: 4px 6px;
 }
 .link-row:hover { border-color: var(--line); background: var(--code); }
-.link-row-name { font-weight: 500; }
+.link-row-name { font-weight: 500; background: none; color: var(--text); padding: 0; min-height: 0; text-align: left; border: 0; }
+.link-row-name:hover:not(:disabled) { filter: none; color: var(--accent); }
+.link-part { display: flex; gap: 8px; align-items: baseline; justify-content: space-between; width: 100%; }
+.link-part .link-row-what { -webkit-line-clamp: 2; }
+.evidence, .inferred { flex: none; font-size: 11px; }
+.inferred { color: var(--muted); font-style: italic; }
+.panel-foot { font-size: 11.5px; margin-top: 8px; }
 .link-row-what {
   font-size: 12px; color: var(--muted);
   display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;

@@ -253,6 +253,9 @@ request or job runs through the system).
   to the visible ancestors of its ends.
 - **Validation**: duplicate ids, unknown parents and parent cycles reject the map; file paths that
   don't exist and edges to unknown nodes are dropped with a warning shown on the map.
+  Edges may cite `evidence` (the file, optionally `:line`, where the code makes that call; added
+  2026-10-11). A citation is kept only if the file exists; the panel shows each relationship as
+  **seen in code** (opens the file) or **inferred**. Maps made before then show all as inferred.
 - **Change detection**: `git diff --name-only <map commit>` plus untracked files (excluding
   `.flightdeck/`), matched against node files (a directory covers everything under it); stale
   nodes and their ancestors are marked. If the map's commit no longer exists, every node is stale.

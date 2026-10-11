@@ -179,7 +179,14 @@ export const MapNode = z.object({
 });
 export type MapNode = z.infer<typeof MapNode>;
 
-export const MapEdge = z.object({ from: z.string(), to: z.string(), label: z.string() });
+export const MapEdge = z.object({
+  from: z.string(),
+  to: z.string(),
+  label: z.string(),
+  // Where the code makes this relationship ("src/api/client.ts" or "src/api/client.ts:42"). Kept
+  // only when the file exists; an edge without it is the model's inference, and is shown as such.
+  evidence: z.string().optional(),
+});
 export type MapEdge = z.infer<typeof MapEdge>;
 
 // What the agent returns (also the --json-schema it is held to).
@@ -212,6 +219,7 @@ export const MapResponse = z.object({
   map: StoredMap.nullable(),
   staleNodeIds: z.array(z.string()), // nodes whose files changed since `commit`
   changedFiles: z.array(z.string()),
+  baseMissing: z.boolean().optional(), // the commit the map was made from is gone (rebase/reset): change is unknown
   job: MapJob.nullable(),
 });
 export type MapResponse = z.infer<typeof MapResponse>;

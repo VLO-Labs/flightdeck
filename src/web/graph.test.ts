@@ -14,14 +14,17 @@ const NODES = [node('web', null), node('web.client', 'web'), node('api', null), 
 test('edges between children are lifted to their visible ancestors, keeping direction and labels', () => {
   const lifted = liftEdges(NODES, [edge('web.client', 'api.routes', 'HTTP'), edge('api.routes', 'db', 'SQL')], null);
   assert.deepEqual(lifted, [
-    { from: 'web', to: 'api', labels: ['HTTP'], twoWay: false },
-    { from: 'api', to: 'db', labels: ['SQL'], twoWay: false },
+    { from: 'web', to: 'api', labels: ['HTTP'], parts: [{ label: 'HTTP', evidence: undefined }], twoWay: false },
+    { from: 'api', to: 'db', labels: ['SQL'], parts: [{ label: 'SQL', evidence: undefined }], twoWay: false },
   ]);
 });
 
 test('A→B and B→A become one two-way edge with both labels; nothing is invented', () => {
-  const lifted = liftEdges(NODES, [edge('web', 'api', 'calls'), edge('api', 'web', 'pushes')], null);
-  assert.deepEqual(lifted, [{ from: 'web', to: 'api', labels: ['calls', 'pushes'], twoWay: true }]);
+  const lifted = liftEdges(NODES, [edge('web', 'api', 'calls'), { ...edge('api', 'web', 'pushes'), evidence: 'src/push.ts:9' }], null);
+  assert.deepEqual(lifted, [{
+    from: 'web', to: 'api', labels: ['calls', 'pushes'], twoWay: true,
+    parts: [{ label: 'calls', evidence: undefined }, { label: 'pushes', evidence: 'src/push.ts:9' }],
+  }]);
 });
 
 test('edges inside one visible node, or leaving the level, are not drawn', () => {

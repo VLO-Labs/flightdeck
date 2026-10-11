@@ -82,3 +82,18 @@ test('a folder of repositories is one project: files are prefixed per repo, chan
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test('edge evidence is kept only when the cited file exists; the edge itself always stays', () => {
+  const r = validateMap({
+    nodes: [node('api', null, ['src/api/']), node('worker', null, ['src/worker/'])],
+    edges: [
+      { from: 'api', to: 'worker', label: 'enqueues', evidence: './src/api/orders.ts:42' },
+      { from: 'worker', to: 'api', label: 'reports', evidence: 'src/made-up.ts' },
+      { from: 'api', to: 'worker', label: 'pings' },
+    ],
+  }, REPO);
+  assert.ok(r.ok);
+  if (!r.ok) return;
+  assert.deepEqual(r.edges.map(e => [e.label, e.evidence]), [['enqueues', 'src/api/orders.ts:42'], ['reports', undefined], ['pings', undefined]]);
+  assert.ok(r.warnings.some(w => w.includes('inferred')));
+});

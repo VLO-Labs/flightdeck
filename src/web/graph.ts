@@ -3,7 +3,9 @@ import type { MapEdge, MapNode, StoredMap } from '../shared/contracts.ts';
 
 export type Heat = 'read' | 'edit';
 
-export type LiftedEdge = { from: string; to: string; labels: string[]; twoWay: boolean };
+// labels: what flows, for drawing; parts: each label with the code that shows it, when cited.
+export type EdgePart = { label: string; evidence?: string };
+export type LiftedEdge = { from: string; to: string; labels: string[]; parts: EdgePart[]; twoWay: boolean };
 
 // Edges can join nodes at any depth; show each one between the visible ancestors of its ends.
 // A→B and B→A become one two-way edge: drawn separately, the reverse one loops around the layout.
@@ -18,15 +20,19 @@ export function liftEdges(nodes: MapNode[], edges: MapEdge[], level: string | nu
     const from = visibleAncestor(e.from);
     const to = visibleAncestor(e.to);
     if (!from || !to || from === to) continue;
+    const add = (le: LiftedEdge) => {
+      if (e.label && !le.labels.includes(e.label)) le.labels.push(e.label);
+      if (!le.parts.some(p => p.label === e.label && p.evidence === e.evidence)) le.parts.push({ label: e.label, evidence: e.evidence });
+    };
     const reverse = out.get(`${to}→${from}`);
     if (reverse) {
       reverse.twoWay = true;
-      if (e.label && !reverse.labels.includes(e.label)) reverse.labels.push(e.label);
+      add(reverse);
       continue;
     }
     const key = `${from}→${to}`;
-    const cur = out.get(key) ?? { from, to, labels: [], twoWay: false };
-    if (e.label && !cur.labels.includes(e.label)) cur.labels.push(e.label);
+    const cur = out.get(key) ?? { from, to, labels: [], parts: [], twoWay: false };
+    add(cur);
     out.set(key, cur);
   }
   return [...out.values()];
