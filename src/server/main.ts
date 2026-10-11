@@ -1,7 +1,7 @@
 // Flightdeck server: UI + API + live chat streams (SSE) + the Claude Code hook. Loopback only.
 import { serve } from '@hono/node-server';
 import { serveStatic } from '@hono/node-server/serve-static';
-import { Hono } from 'hono';
+import { Hono, type Context } from 'hono';
 import { streamSSE } from 'hono/streaming';
 import { execFileSync } from 'node:child_process';
 import { randomUUID, timingSafeEqual } from 'node:crypto';
@@ -20,6 +20,7 @@ import { effectiveModel, isRunning, startTurn, stopTurn } from './runner.ts';
 import { TEMPLATE_RULES } from './rules.ts';
 import { changedSince, generatorDecision, jobFor, jobForSession, mapsDir, moveMaps, readMap, repoDirs, staleNodeIds, startGeneration, stopGeneration } from './maps.ts';
 import { viewFile } from './files.ts';
+import { projectProcesses, stopProcessGroup } from './processes.ts';
 import { refuseLocal } from './guard.ts';
 import { STACKS, scaffoldPrompt } from '../shared/stacks.ts';
 
@@ -221,6 +222,24 @@ app.get('/api/projects/:id/file', c => {
   return 'error' in r ? c.json(r, 404) : c.json(r);
 });
 
+// --- Processes running in the project --------------------------------------------------------------
+const projectRoots = (row: typeof projects.$inferSelect) => [...new Set([row.path, toProject(row).realPath])];
+
+app.get('/api/projects/:id/processes', async c => {
+  const project = projectById(c.req.param('id'));
+  if (!project) return c.json({ error: 'not found' }, 404);
+  return c.json(await projectProcesses(projectRoots(project)));
+});
+
+app.post('/api/projects/:id/processes/:pid/stop', async c => {
+  const project = projectById(c.req.param('id'));
+  if (!project) return c.json({ error: 'not found' }, 404);
+  // Only a tree that is running in this project right now; never an arbitrary pid.
+  return (await stopProcessGroup(projectRoots(project), Number(c.req.param('pid'))))
+    ? c.json({ ok: true })
+    : c.json({ error: 'that process is no longer running in this project' }, 409);
+});
+
 // --- Rules ----------------------------------------------------------------------------------------
 app.get('/api/projects/:id/rules', c =>
   c.json(db.select().from(rules).where(eq(rules.projectId, Number(c.req.param('id')))).all()));
@@ -333,8 +352,12 @@ app.get('/api/chats/:id/feed', c => {
 });
 
 // --- The web app ----------------------------------------------------------------------------------
-app.use('/*', serveStatic({ root: './dist' }));
-app.get('/*', serveStatic({ path: './dist/index.html' }));
+// index.html must be revalidated, or after an update the browser keeps loading the old bundle.
+// The hashed files under assets/ never change, so those can be cached for good.
+const cacheHeaders = (path: string, c: Context) =>
+  c.header('Cache-Control', path.includes('/assets/') ? 'public, max-age=31536000, immutable' : 'no-cache');
+app.use('/*', serveStatic({ root: './dist', onFound: cacheHeaders }));
+app.get('/*', serveStatic({ path: './dist/index.html', onFound: cacheHeaders }));
 
 // No login on loopback: this check is what keeps other web pages from driving Flightdeck.
 const guarded = (req: Request) => {

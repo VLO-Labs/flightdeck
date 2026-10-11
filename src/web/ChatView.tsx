@@ -1,9 +1,9 @@
 // One chat: the live feed (replayed, then streamed), approval cards, the composer, and the map
 // pane — attach nodes as context, watch the agent's reads and edits light the map up.
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import Markdown from 'react-markdown';
+import Markdown, { type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { FeedItem, MAP_VIEWS, MODELS, type Chat, type MapViewId, type Project } from '../shared/contracts.ts';
+import { FeedItem, MAP_VIEWS, MODELS, type Chat, type MapViewId, type ProcessGroup, type Project } from '../shared/contracts.ts';
 import { splitCommand } from '../shared/shell.ts';
 import { actState, derive, groupActivities, groupSummary, str, type Activity, type ActState, type Approval, type RateLimit } from './feedModel.ts';
 import { api } from './api.ts';
@@ -144,6 +144,7 @@ export function ChatView({ chat, project, onChanged, initialContext }: {
           </button>
         </div>
       </header>
+      <RunningStrip project={project} turnRunning={d.running} />
 
       <div className="feed-wrap">
       <div
@@ -188,7 +189,7 @@ export function ChatView({ chat, project, onChanged, initialContext }: {
                 </div>
               );
             case 'text':
-              return <div key={b.key} className="msg assistant md"><Markdown remarkPlugins={[remarkGfm]}>{b.text}</Markdown></div>;
+              return <div key={b.key} className="msg assistant md"><Markdown remarkPlugins={[remarkGfm]} components={MD_COMPONENTS}>{b.text}</Markdown></div>;
             case 'note':
               return <div key={b.key} className={`note ${b.tone}`}>{b.text}</div>;
             case 'approval':
@@ -197,7 +198,7 @@ export function ChatView({ chat, project, onChanged, initialContext }: {
               return <ActivityLine key={b.key} a={b} state={actState(b, d.ended)} rel={rel} onOpenFile={openFile} mode={cur.mode} />;
           }
         })}
-        {d.partial && <div className="msg assistant partial"><Markdown remarkPlugins={[remarkGfm]}>{d.partial}</Markdown></div>}
+        {d.partial && <div className="msg assistant partial"><Markdown remarkPlugins={[remarkGfm]} components={MD_COMPONENTS}>{d.partial}</Markdown></div>}
         {d.running && !d.partial && <div className="note muted working">Working…</div>}
         <div ref={bottom} />
       </div>
@@ -502,6 +503,11 @@ function ApprovalCard({ a, rel, inline, mode }: { a: Approval; rel: (p: unknown)
   );
 }
 
+// Links in replies open in a new tab, so following one never navigates away from the chat.
+const MD_COMPONENTS: Components = {
+  a: ({ node: _node, ...props }) => <a {...props} target="_blank" rel="noopener noreferrer" />,
+};
+
 // The model for the chat's current mode. "Project default" clears the chat's override.
 function ModelPicker({ chat, project, disabled, onChange }: {
   chat: Chat; project: Project; disabled: boolean;
@@ -523,6 +529,62 @@ function ModelPicker({ chat, project, disabled, onChange }: {
     </select>
   );
 }
+
+// What's running in the project's folder — servers the agent left running (a `nohup … &` outlives its
+// turn), or ones you started — with their ports and a Stop. Hidden when nothing is running.
+function RunningStrip({ project, turnRunning }: { project: Project; turnRunning: boolean }) {
+  const [groups, setGroups] = useState<ProcessGroup[]>([]);
+  const [confirming, setConfirming] = useState<number | null>(null);
+  const [error, setError] = useState('');
+  const load = useRef(async () => {});
+  load.current = async () => {
+    try { setGroups(await api.processes(project.id)); } catch { /* keep the last list; the next poll retries */ }
+  };
+  useEffect(() => {
+    setGroups([]);
+    load.current();
+    const t = setInterval(() => document.visibilityState === 'visible' && load.current(), 5000);
+    return () => clearInterval(t);
+  }, [project.id]);
+  useEffect(() => { load.current(); }, [turnRunning]); // a turn may have just started or stopped something
+  useEffect(() => {
+    if (confirming === null) return;
+    const t = setTimeout(() => setConfirming(null), 4000);
+    return () => clearTimeout(t);
+  }, [confirming]);
+
+  if (!groups.length) return null;
+  return (
+    <div className="running-strip">
+      <span className="running-label">Running</span>
+      {groups.map(g => (
+        <span key={g.pid} className="running-item" title={`pid ${g.pid} · ${g.pids.length} process${g.pids.length === 1 ? '' : 'es'}`}>
+          <code>{g.command}</code>
+          {g.ports.map(port => (
+            <a key={port} href={`http://localhost:${port}`} target="_blank" rel="noopener noreferrer">:{port}</a>
+          ))}
+          <span className="muted">{uptime(g.secs)}</span>
+          <button
+            className={`small ${confirming === g.pid ? 'danger' : 'ghost'}`}
+            onClick={async () => {
+              if (confirming !== g.pid) return setConfirming(g.pid);
+              setConfirming(null);
+              setError('');
+              try { await api.stopProcess(project.id, g.pid); } catch (e) { setError((e as Error).message); }
+              setTimeout(() => load.current(), 1000);
+            }}
+          >
+            {confirming === g.pid ? 'Stop it?' : 'Stop'}
+          </button>
+        </span>
+      ))}
+      {error && <span className="error">{error}</span>}
+    </div>
+  );
+}
+
+const uptime = (secs: number) =>
+  secs < 60 ? `${secs}s` : secs < 3600 ? `${Math.floor(secs / 60)}m` : secs < 86400 ? `${Math.floor(secs / 3600)}h` : `${Math.floor(secs / 86400)}d`;
 
 function RateLimitBadge({ r }: { r: RateLimit }) {
   const reset = r.resetsAt ? new Date(r.resetsAt * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';

@@ -96,6 +96,14 @@ pre { background: var(--code); padding: 8px; border-radius: 6px; overflow-x: aut
 .chat-meta { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; justify-content: flex-end; }
 .chat-meta button, .chat-meta .badge { white-space: nowrap; }
 .chat-name { min-width: 80px; }
+.running-strip {
+  display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: center;
+  padding: 6px 16px; border-bottom: 1px solid var(--line); background: var(--panel); font-size: 12px;
+}
+.running-label { color: var(--good); font-weight: 600; }
+.running-label::before { content: '●'; margin-right: 5px; }
+.running-item { display: inline-flex; gap: 6px; align-items: center; min-width: 0; }
+.running-item code { font-family: var(--mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 320px; }
 .feed-wrap { flex: 1; position: relative; min-height: 0; display: flex; }
 .feed { flex: 1; overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 10px; overflow-anchor: none; }
 .feed > * { max-width: 860px; width: 100%; margin: 0 auto; }
@@ -351,6 +359,7 @@ table.fields td { padding: 2px 8px 2px 0; vertical-align: top; }
 .chat-map-foot { font-size: 12px; padding: 4px 10px; border-top: 1px solid var(--line); }
 button.ghost { background: none; color: var(--accent); border: 1px solid var(--line); }
 button.ghost:hover:not(:disabled) { filter: none; border-color: var(--accent); }
+button.danger { background: var(--bad); color: #fff; }
 
 .chips { display: flex; gap: 4px; flex-wrap: wrap; margin-bottom: 4px; }
 .composer-chips { width: 100%; margin: 0; }

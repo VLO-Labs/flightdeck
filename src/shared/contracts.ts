@@ -237,6 +237,14 @@ export const FileResponse = z.discriminatedUnion('kind', [
 ]);
 export type FileResponse = z.infer<typeof FileResponse>;
 
+// A tree of processes running in a project's folder (a dev server, a watcher…), named by its root.
+export const ProcessGroup = z.object({
+  pid: z.number(), command: z.string(), secs: z.number(), // how long the root has been running
+  ports: z.array(z.number()), // TCP ports anything in the tree listens on
+  pids: z.array(z.number()),
+});
+export type ProcessGroup = z.infer<typeof ProcessGroup>;
+
 // One folder in the "Add existing" browser: its subfolders, and which of them can be added as projects.
 export const BrowseResponse = z.object({
   path: z.string(),

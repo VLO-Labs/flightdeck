@@ -1,6 +1,6 @@
 // Thin typed client for the Flightdeck API. Responses are parsed with the shared contracts.
 import { z } from 'zod';
-import { BrowseResponse, Chat, FileResponse, MapResponse, Project, Rule, type Decision, type MapViewId, type Mode, type NewRule } from '../shared/contracts.ts';
+import { BrowseResponse, Chat, FileResponse, MapResponse, ProcessGroup, Project, Rule, type Decision, type MapViewId, type Mode, type NewRule } from '../shared/contracts.ts';
 
 async function call<T>(schema: z.ZodType<T>, method: string, url: string, body?: unknown): Promise<T> {
   const res = await fetch(url, {
@@ -34,6 +34,8 @@ export const api = {
   generateMap: (projectId: number, view: MapViewId) => call(Ok, 'POST', `/api/projects/${projectId}/maps/${view}/generate`),
   stopMap: (projectId: number) => call(Ok, 'POST', `/api/projects/${projectId}/maps/stop`),
   file: (projectId: number, path: string) => call(FileResponse, 'GET', `/api/projects/${projectId}/file?path=${encodeURIComponent(path)}`),
+  processes: (projectId: number) => call(z.array(ProcessGroup), 'GET', `/api/projects/${projectId}/processes`),
+  stopProcess: (projectId: number, pid: number) => call(Ok, 'POST', `/api/projects/${projectId}/processes/${pid}/stop`),
   rules: (projectId: number) => call(z.array(Rule), 'GET', `/api/projects/${projectId}/rules`),
   addRule: (projectId: number, r: NewRule) => call(Rule, 'POST', `/api/projects/${projectId}/rules`, r),
   deleteRule: (projectId: number, ruleId: number) => call(Ok, 'DELETE', `/api/projects/${projectId}/rules/${ruleId}`),
