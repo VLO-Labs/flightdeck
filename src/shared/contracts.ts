@@ -37,11 +37,7 @@ export const Project = z.object({
 });
 export type Project = z.infer<typeof Project>;
 
-export const NewProject = z.object({
-  name: z.string().min(1),
-  path: z.string().min(1),
-  create: z.boolean().optional(), // the folder doesn't exist yet: make it and `git init` it
-});
+export const NewProject = z.object({ name: z.string().min(1), path: z.string().min(1) });
 export const CreateProject = z.object({
   name: z.string().trim().min(1),
   path: z.string().min(1),

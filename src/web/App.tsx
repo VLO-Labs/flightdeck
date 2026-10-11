@@ -166,33 +166,23 @@ function AddProject({ onAdded }: { onAdded: (p: Project) => void }) {
   const [path, setPath] = useState('/home/vlolabs/dev/');
   const [name, setName] = useState('');
   const [error, setError] = useState('');
-  // Set when the folder doesn't exist: offer to create it (for the path as it was when tried).
-  const [missing, setMissing] = useState<string | null>(null);
-  const add = async (create: boolean) => {
-    setError('');
-    setMissing(null);
-    try {
-      onAdded(await api.addProject(name.trim() || path.replace(/\/+$/, '').split('/').pop()!, path.trim(), create));
-    } catch (err) {
-      setError((err as Error).message);
-      if ((err as { body?: { missing?: boolean } }).body?.missing) setMissing(path.trim());
-    }
-  };
   return (
     <form
       className="add-project"
-      onSubmit={e => {
+      onSubmit={async e => {
         e.preventDefault();
-        add(false);
+        setError('');
+        try {
+          onAdded(await api.addProject(name.trim() || path.replace(/\/+$/, '').split('/').pop()!, path.trim()));
+        } catch (err) {
+          setError((err as Error).message);
+        }
       }}
     >
-      <input value={path} onChange={e => { setPath(e.target.value); setMissing(null); }} placeholder="/home/vlolabs/dev/vlolabs/hq" />
+      <input value={path} onChange={e => setPath(e.target.value)} placeholder="/home/vlolabs/dev/vlolabs/hq" />
       <input value={name} onChange={e => setName(e.target.value)} placeholder="Name (defaults to folder)" />
       <button type="submit">Add</button>
       {error && <div className="error">{error}</div>}
-      {missing && (
-        <button type="button" onClick={() => add(true)}>Create {missing} as a new git repository</button>
-      )}
     </form>
   );
 }
