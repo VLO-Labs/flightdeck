@@ -51,8 +51,8 @@ export function ChatView({ chat, project, onChanged, initialContext, chats, onSw
   const [error, setError] = useState('');
   const [cur, setCur] = useState(chat); // optimistic copy of the chat's mode/models
   useEffect(() => setCur(chat), [chat]);
-  const bottom = useRef<HTMLDivElement>(null);
   const feed = useRef<HTMLDivElement>(null);
+  const feedBody = useRef<HTMLDivElement>(null);
   // Following the bottom, unless the reader scrolled up; then new output only raises a button.
   const stick = useRef(scrollMemory.get(chat.id) == null);
   const restored = useRef(false);
@@ -117,19 +117,27 @@ export function ChatView({ chat, project, onChanged, initialContext, chats, onSw
     restored.current = true;
     const saved = scrollMemory.get(chat.id);
     if (saved != null) feed.current.scrollTop = saved;
-    else bottom.current?.scrollIntoView({ block: 'end' });
+    else pinBottom();
   }, [items, chat.id]);
 
+  // Following the bottom means staying there whatever changes size: new output, a card opening, the
+  // Running strip or the composer taking room above or below, the column narrowing. Not only when
+  // the feed changes: while a card waits for you nothing new arrives, but the strip can still appear.
+  const pinBottom = () => { if (feed.current) feed.current.scrollTop = feed.current.scrollHeight; };
   useEffect(() => {
-    if (!restored.current) return;
-    if (stick.current) bottom.current?.scrollIntoView({ block: 'end' });
-    else setBehind(true);
+    const ro = new ResizeObserver(() => { if (stick.current) pinBottom(); });
+    if (feed.current) ro.observe(feed.current);
+    if (feedBody.current) ro.observe(feedBody.current);
+    return () => ro.disconnect();
+  }, []);
+  useEffect(() => {
+    if (restored.current && !stick.current) setBehind(true);
   }, [d]);
   const toBottom = () => {
     stick.current = true;
     setBehind(false);
     scrollMemory.delete(chat.id);
-    bottom.current?.scrollIntoView({ block: 'end' });
+    pinBottom();
   };
 
   const send = async () => {
@@ -210,6 +218,7 @@ export function ChatView({ chat, project, onChanged, initialContext, chats, onSw
           else scrollMemory.set(chat.id, el.scrollTop);
         }}
       >
+      <div className="feed-body" ref={feedBody}>
         {items.length === 0 && (
           <div className="feed-empty muted">
             {connected
@@ -287,7 +296,7 @@ export function ChatView({ chat, project, onChanged, initialContext, chats, onSw
         })}
         {d.partial && <div className="msg assistant partial"><Markdown remarkPlugins={[remarkGfm]} components={MD_COMPONENTS}>{d.partial}</Markdown></div>}
         {d.running && !d.partial && <div className="note muted working">Working…</div>}
-        <div ref={bottom} />
+      </div>
       </div>
       {behind && <button className="small new-below" onClick={toBottom}>New activity ↓</button>}
       </div>
