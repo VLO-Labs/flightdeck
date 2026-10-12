@@ -11,7 +11,7 @@ export type Activity = {
 };
 export type Block =
   | { kind: 'user'; key: string; text: string; tag?: string; context?: string[] }
-  | { kind: 'text'; key: string; text: string }
+  | { kind: 'text'; key: string; text: string; command?: boolean } // command: a slash command's own output, not the model's
   | Activity
   | { kind: 'note'; key: string; text: string; tone: 'muted' | 'bad' | 'good' }
   | { kind: 'approval'; key: string; approval: Approval }
@@ -140,7 +140,7 @@ export function derive(items: FeedItem[], roots: string[]): Derived {
         if (size && !ev.parent_tool_use_id) use().context = size;
         for (const c of ev.message?.content ?? []) {
           if (c.type === 'text' && c.text?.trim()) {
-            blocks.push({ kind: 'text', key: `${key}-${c.id ?? blocks.length}`, text: c.text });
+            blocks.push({ kind: 'text', key: `${key}-${c.id ?? blocks.length}`, text: c.text, ...(u && !size ? { command: true } : {}) });
             partial = '';
           } else if (c.type === 'tool_use') {
             const a: Activity = { kind: 'activity', key: `${key}-${c.id}`, runId: it.runId, toolUseId: c.id, name: c.name, input: c.input ?? {} };

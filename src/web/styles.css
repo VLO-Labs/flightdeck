@@ -130,6 +130,18 @@ pre { background: var(--code); padding: 8px; border-radius: 6px; overflow-x: aut
 .msg.partial { opacity: .85; }
 .md > :first-child { margin-top: 0; } .md > :last-child { margin-bottom: 0; }
 .md p, .md ul, .md ol { margin: .5em 0; }
+/* A command's output is plain text laid out in lines (/usage); Markdown would run them together. */
+.cmd-out p { white-space: pre-line; }
+.ctx-report { display: flex; flex-direction: column; gap: 8px; }
+.ctx-bar { display: flex; height: 8px; border-radius: 4px; overflow: hidden; background: var(--code); }
+.ctx-bar .used { background: var(--accent); }
+.ctx-bar .free { flex: 1; }
+.ctx-bar .buffer { background: repeating-linear-gradient(45deg, var(--line) 0 3px, transparent 3px 6px); }
+.ctx-cats { border-collapse: collapse; font-size: 13px; width: auto; }
+.ctx-cats td { padding: 2px 0; }
+.ctx-cats td:last-child { text-align: right; padding-left: 24px; font-variant-numeric: tabular-nums; }
+.ctx-note { font-size: 12.5px; }
+.ctx-report details summary { cursor: pointer; color: var(--muted); font-size: 12.5px; }
 .md ul, .md ol { padding-left: 1.4em; }
 .md li + li { margin-top: .2em; }
 .md h1, .md h2, .md h3, .md h4 { line-height: 1.3; margin: 1em 0 .4em; }

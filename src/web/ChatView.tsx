@@ -7,6 +7,7 @@ import remarkGfm from 'remark-gfm';
 import { FeedItem, MODELS, type Chat, type CheckResult, type MapNode, type PlanCheck, type MapViewId, type PlanFreshness, type PlanResponse, type ProcessGroup, type Project, type StoredMap } from '../shared/contracts.ts';
 import { applyPlan, type PlannedNode } from '../shared/plan.ts';
 import { splitCommand } from '../shared/shell.ts';
+import { parseContextReport, type ContextReport } from './contextReport.ts';
 import { blockedReason, commandMenu, matchCommands, parseCommand, type MenuCommand, type ReportedCommands } from '../shared/commands.ts';
 import { actState, derive, groupActivities, groupSummary, str, type Activity, type ActState, type Approval, type Usage } from './feedModel.ts';
 import { api } from './api.ts';
@@ -267,8 +268,11 @@ export function ChatView({ chat, project, onChanged, initialContext, chats, onSw
                   <div className="msg-text">{b.text}</div>
                 </div>
               );
-            case 'text':
-              return <div key={b.key} className="msg assistant md"><Markdown remarkPlugins={[remarkGfm]} components={MD_COMPONENTS}>{b.text}</Markdown></div>;
+            case 'text': {
+              const report = b.command ? parseContextReport(b.text) : null;
+              if (report) return <ContextReportView key={b.key} r={report} />;
+              return <div key={b.key} className={`msg assistant md ${b.command ? 'cmd-out' : ''}`}><Markdown remarkPlugins={[remarkGfm]} components={MD_COMPONENTS}>{b.text}</Markdown></div>;
+            }
             case 'note':
               return <div key={b.key} className={`note ${b.tone}`}>{b.text}</div>;
             case 'approval':
@@ -1150,5 +1154,45 @@ function UsageBadge({ u }: { u: Usage }) {
   );
 }
 const tokens = (x: number) =>
-  x >= 1e6 ? `${+(x / 1e6).toFixed(x < 1e7 ? 1 : 0)}M` : x >= 1e3 ? `${Math.round(x / 1e3)}k` : String(x);
+  x >= 1e6 ? `${+(x / 1e6).toFixed(x < 1e7 ? 1 : 0)}M` : x >= 1e3 ? `${+(x / 1e3).toFixed(x < 1e4 ? 1 : 0)}k` : String(x);
+
+// /context, laid out: the total and a bar, what takes the context in plain words, the deferred tool
+// descriptions said apart (they aren't in the total), and the long per-tool tables folded away.
+function ContextReportView({ r }: { r: ContextReport }) {
+  const pct = (x: number) => (r.window ? (x / r.window) * 100 : 0);
+  const model = MODELS.find(m => m.id === r.model)?.label ?? r.model;
+  return (
+    <div className="msg assistant ctx-report">
+      <div className="ctx-head">
+        <strong>Context: {tokens(r.used)} of {tokens(r.window)} used</strong>
+        <span className="muted"> · {Math.round(pct(r.used))}%{model ? ` · ${model}` : ''}</span>
+      </div>
+      <div className="ctx-bar" aria-hidden>
+        <span className="used" style={{ width: `${pct(r.used)}%` }} />
+        <span className="free" />
+        {r.buffer > 0 && <span className="buffer" style={{ width: `${pct(r.buffer)}%` }} />}
+      </div>
+      <table className="ctx-cats">
+        <tbody>
+          {r.categories.map(c => <tr key={c.name}><td>{c.label}</td><td>{tokens(c.tokens)}</td></tr>)}
+          <tr className="muted"><td>Free</td><td>{tokens(r.free)}</td></tr>
+          {r.buffer > 0 && <tr className="muted"><td>Kept free for automatic compaction</td><td>{tokens(r.buffer)}</td></tr>}
+        </tbody>
+      </table>
+      {r.deferred > 0 && (
+        <div className="muted ctx-note">
+          Not counted: {tokens(r.deferred)} of tool descriptions (MCP and built-in) that load only when Claude uses the tool.
+        </div>
+      )}
+      {r.details.length > 0 && (
+        <details>
+          <summary>Details: {r.details.map(d => `${d.title}${d.rows ? ` (${d.rows})` : ''}`).join(' · ')}</summary>
+          <div className="md">
+            <Markdown remarkPlugins={[remarkGfm]} components={MD_COMPONENTS}>{r.details.map(d => `### ${d.title}\n\n${d.markdown}`).join('\n\n')}</Markdown>
+          </div>
+        </details>
+      )}
+    </div>
+  );
+}
 

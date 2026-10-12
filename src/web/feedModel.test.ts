@@ -80,12 +80,16 @@ test('commands: compaction, what a command printed or failed with, the command l
     ev({ type: 'user', message: { content: '<local-command-stdout>Compacted </local-command-stdout>' } }),
     ev({ type: 'user', message: { content: '<local-command-stderr>Shell command failed: no origin/HEAD</local-command-stderr>' } }),
     ev({ type: 'user', message: { content: [{ type: 'text', text: '<local-command-stdout>3 servers</local-command-stdout>' }] } }),
+    ev({ type: 'assistant', message: { content: [{ type: 'text', text: 'Current session: 2% used\nCurrent week: 28% used' }], usage: { input_tokens: 0, output_tokens: 0 } } }),
+    ev({ type: 'assistant', message: { content: [{ type: 'text', text: 'A reply from the model.' }], usage: { input_tokens: 3, output_tokens: 9 } } }),
   ], ['/repo']);
-  assert.deepEqual(d.blocks.map(b => b.kind === 'note' && [b.tone, b.text]), [
+  assert.deepEqual(d.blocks.filter(b => b.kind === 'text').map(b => b.kind === 'text' && !!b.command), [true, false]);
+  assert.deepEqual(d.blocks.filter(b => b.kind === 'note').map(b => b.kind === 'note' && [b.tone, b.text]), [
     ['muted', 'Compacted the conversation: 27k → 3k tokens'],
     ['bad', 'Shell command failed: no origin/HEAD'],
     ['muted', '3 servers'],
   ]);
-  assert.equal(d.usage?.context, 3_046);
+  // Compaction set it to 3,046; the model's reply after it (3 in, 9 out) is the latest call.
+  assert.equal(d.usage?.context, 12);
   assert.deepEqual(d.commands, { commands: ['compact', 'debug'], skills: ['debug'], terminal: ['color'] });
 });

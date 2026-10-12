@@ -86,6 +86,20 @@ const BUILD_PROMPT =
   'asks. If earlier turns in this conversation were in DISCUSS mode, the user has since switched the ' +
   'chat to BUILD: those read-only limits no longer apply, so go ahead and implement.';
 
+// Both modes: a turn ends when the agent replies, and Flightdeck then stops the CLI — with it every
+// task the agent started with run_in_background. A server meant to outlast the reply must be detached
+// (nohup … &); it then shows in the Running strip, where the user can stop it.
+const PROCESSES_PROMPT =
+  'Long-running processes: this turn ends when you reply, and anything you started with ' +
+  'run_in_background is stopped then. So when the user should be able to use something after your ' +
+  'reply — a dev or web server, a watcher, a local database — start it detached, without being asked: ' +
+  '`nohup <command> > /tmp/<short-name>.log 2>&1 &` from the right directory. Then check it is up ' +
+  '(request the port, or read the log) and give the user the URL. If something is already listening ' +
+  'on that port, reuse it, or stop it and start the new one — never leave two. Commands that finish ' +
+  'on their own (builds, tests, installs, scripts) run normally in the foreground, even when slow; ' +
+  'use run_in_background only for work you will wait on before replying. Flightdeck lists detached ' +
+  'processes in its Running strip, where the user can stop them.';
+
 // With an approved plan, Build implements that version (PLAN.md §10) — not whatever was said after it.
 const PLAN_PROMPT =
   'This chat has an APPROVED PLAN, below. It is the spec for this work: implement it, following its ' +
@@ -206,9 +220,9 @@ export function startTurn(chatId: number, text: string, initialContext: ContextI
 
   // The agent can't see Flightdeck's UI, so each turn says where the chat's plan stands.
   const reqLines = mode === 'build' ? requirementsLines(project, usedRequirements.length > 0, unapproved) : '';
-  const prompt = mode === 'discuss' ? `${DISCUSS_PROMPT}\n\n${planStatusLine(chatId)}${proposals(chatId)}`
+  const prompt = (mode === 'discuss' ? `${DISCUSS_PROMPT}\n\n${planStatusLine(chatId)}${proposals(chatId)}`
     : approved ? `${BUILD_PROMPT}\n\n${PLAN_PROMPT}\n\n${planAsText(approved.body, approved.version, currentMaps(project))}${reqLines}`
-    : `${BUILD_PROMPT}\n\n${planStatusLine(chatId)}${reqLines}`;
+    : `${BUILD_PROMPT}\n\n${planStatusLine(chatId)}${reqLines}`) + `\n\n${PROCESSES_PROMPT}`;
   const args = [
     // A slash command goes as typed: anything in front would make it plain text. The mode's
     // instructions still reach the agent as the appended system prompt, and the hook still guards.

@@ -137,6 +137,14 @@ closed (`< /dev/null`) or the CLI waits 3 s for piped input and prints a non-JSO
   don't go with a command. Command output comes back as an assistant message or as
   `<local-command-stdout|stderr>` in a user message (shown as a note); `/compact` emits
   `compact_boundary` with pre/post tokens — shown as a line, and the context badge drops to it.
+  A command's own output (zero usage: no model call) keeps its line breaks; `/context` is laid out
+  (`src/web/contextReport.ts`): total and bar, the categories in plain words, the deferred tool
+  descriptions said apart (they aren't in the total), the per-tool tables folded under Details.
+- **Long-running processes.** Every turn's system prompt says: the turn ends at the reply and
+  Flightdeck then stops the CLI with its `run_in_background` tasks, so whatever should outlast the
+  reply (dev server, watcher, database) is started `nohup … > /tmp/<name>.log 2>&1 &`, checked, and
+  its URL given; an existing listener on the port is reused or replaced; finite commands run in the
+  foreground. Before this, servers died with the turn unless the user said "nohup".
 
 **Node context.** Each diagram node selected as context becomes a short block in the prompt:
 name, one-line summary, the files it covers — so "this" is unambiguous.
