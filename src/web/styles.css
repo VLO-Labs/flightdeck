@@ -53,7 +53,8 @@ pre { background: var(--code); padding: 8px; border-radius: 6px; overflow-x: aut
   border-right: 1px solid var(--line); padding: 14px; display: flex; flex-direction: column; gap: 8px;
   overflow-y: auto; background: var(--panel);
 }
-.brand { font-weight: 700; font-size: 16px; margin-bottom: 6px; }
+.brand { font-weight: 700; font-size: 16px; margin-bottom: 6px; display: flex; justify-content: space-between; align-items: baseline; }
+.clock { font-weight: 400; font-size: 13px; color: var(--muted); font-variant-numeric: tabular-nums; }
 .label { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
 .row-between { display: flex; justify-content: space-between; align-items: center; margin-top: 10px; }
 .side-nav { display: flex; flex-direction: column; gap: 2px; margin-top: 6px; }

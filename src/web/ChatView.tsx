@@ -7,7 +7,7 @@ import remarkGfm from 'remark-gfm';
 import { FeedItem, MODELS, type Chat, type CheckResult, type MapNode, type PlanCheck, type MapViewId, type PlanFreshness, type PlanResponse, type ProcessGroup, type Project, type StoredMap } from '../shared/contracts.ts';
 import { applyPlan, type PlannedNode } from '../shared/plan.ts';
 import { splitCommand } from '../shared/shell.ts';
-import { actState, derive, groupActivities, groupSummary, str, type Activity, type ActState, type Approval, type RateLimit } from './feedModel.ts';
+import { actState, derive, groupActivities, groupSummary, str, type Activity, type ActState, type Approval, type RateLimit, type Usage } from './feedModel.ts';
 import { api } from './api.ts';
 import { Crumbs, MapCanvas, nodesForFile, type Heat } from './MapCanvas.tsx';
 import { useMap, type NodeRef } from './MapView.tsx';
@@ -194,6 +194,7 @@ export function ChatView({ chat, project, onChanged, initialContext, chats, onSw
             try { setCur(await api.chatSettings(chat.id, { [field]: value })); } catch (e) { setError((e as Error).message); }
           }} />
           {d.rateLimit && <RateLimitBadge r={d.rateLimit} />}
+          {d.usage && <UsageBadge u={d.usage} />}
           {!connected && <span className="badge bad">reconnecting…</span>}
           <button
             className={`small wide-only ${showWorkspace ? '' : 'ghost'}`}
@@ -1081,6 +1082,25 @@ function RunningStrip({ project, turnRunning }: { project: Project; turnRunning:
 
 const uptime = (secs: number) =>
   secs < 60 ? `${secs}s` : secs < 3600 ? `${Math.floor(secs / 60)}m` : secs < 86400 ? `${Math.floor(secs / 3600)}h` : `${Math.floor(secs / 86400)}d`;
+
+// How full the chat's context is, and the tokens its turns have used so far.
+function UsageBadge({ u }: { u: Usage }) {
+  const t = u.total;
+  const used = t.input + t.cacheRead + t.cacheWrite + t.output;
+  const full = u.window ? u.context / u.window : 0;
+  const n = (x: number) => x.toLocaleString();
+  const title = [
+    `Context: ${n(u.context)}${u.window ? ` of ${n(u.window)} tokens (${Math.round(full * 100)}%)` : ' tokens'} — what the next message starts from.`,
+    `This chat so far (${u.turns} turn${u.turns === 1 ? '' : 's'}): ${n(t.input)} input, ${n(t.cacheRead)} read from cache, ${n(t.cacheWrite)} written to cache, ${n(t.output)} output.`,
+  ].join('\n');
+  return (
+    <span className={`badge ${full >= 0.8 ? 'warn' : ''}`} title={title}>
+      context {tokens(u.context)}{u.window ? ` / ${tokens(u.window)}` : ''}{u.turns ? ` · ${tokens(used)} used` : ''}
+    </span>
+  );
+}
+const tokens = (x: number) =>
+  x >= 1e6 ? `${+(x / 1e6).toFixed(x < 1e7 ? 1 : 0)}M` : x >= 1e3 ? `${Math.round(x / 1e3)}k` : String(x);
 
 function RateLimitBadge({ r }: { r: RateLimit }) {
   const reset = r.resetsAt ? new Date(r.resetsAt * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';

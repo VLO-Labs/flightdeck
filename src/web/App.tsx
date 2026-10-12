@@ -117,7 +117,7 @@ export function App() {
   return (
     <div className={`app ${chat && !navOpen ? 'chat-open' : ''}`}>
       <aside className="sidebar">
-        <div className="brand">Flightdeck</div>
+        <div className="brand">Flightdeck <Clock /></div>
 
         <label className="label">Project</label>
         <select value={projectId ?? ''} onChange={e => setProjectId(Number(e.target.value))}>
@@ -366,4 +366,15 @@ function localStorageGet(k: string) {
 }
 function localStorageSet(k: string, v: string) {
   try { localStorage.setItem(k, v); } catch { /* not essential */ }
+}
+
+// The time, always in view — next to the plan's "resets at" it says how long is left.
+function Clock() {
+  const fmt = () => new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  const [now, setNow] = useState(fmt);
+  useEffect(() => {
+    const t = setInterval(() => setNow(fmt()), 1000);
+    return () => clearInterval(t);
+  }, []);
+  return <time className="clock" title={new Date().toLocaleDateString([], { weekday: 'long', day: 'numeric', month: 'long' })}>{now}</time>;
 }

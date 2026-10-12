@@ -19,9 +19,16 @@ export type Block =
   | { kind: 'check'; key: string; checkId: number; version: number; versionId?: number; counts: Record<string, number>; failed?: string };
 
 export type RateLimit = { status?: string; resetsAt?: number; rateLimitType?: string };
+// The chat's token use. context: what the latest model call carried — what the next message starts
+// from (it drops after a compaction); window: the model's context size, known once a turn has ended.
+// total: every finished turn's tokens added up, cache reads included.
+export type Usage = {
+  context: number; window?: number; turns: number;
+  total: { input: number; cacheRead: number; cacheWrite: number; output: number };
+};
 // touched: repo-relative paths the latest run read or edited — what lights up the map.
 type Derived = {
-  blocks: Block[]; partial: string; running: boolean; rateLimit?: RateLimit; model?: string;
+  blocks: Block[]; partial: string; running: boolean; rateLimit?: RateLimit; model?: string; usage?: Usage;
   touched: Map<string, Heat>;
   ended: Set<number>; // runs that are over (finished, failed or stopped)
 };
@@ -56,6 +63,9 @@ export function derive(items: FeedItem[], roots: string[]): Derived {
   let running = false;
   let rateLimit: RateLimit | undefined;
   let model: string | undefined;
+  let usage: Usage | undefined;
+  const use = () => (usage ??= { context: 0, turns: 0, total: { input: 0, cacheRead: 0, cacheWrite: 0, output: 0 } });
+  const n = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : 0);
   let lastRun = -1;
   const ended = new Set<number>();
 
@@ -104,6 +114,11 @@ export function derive(items: FeedItem[], roots: string[]): Derived {
         if (ev.event?.type === 'content_block_delta' && d?.type === 'text_delta') partial += d.text;
         if (ev.event?.type === 'message_start') partial = '';
       } else if (ev.type === 'assistant') {
+        // A subagent's calls have their own context; only the chat's own model calls count here.
+        const u = ev.message?.usage;
+        if (u && !ev.parent_tool_use_id) {
+          use().context = n(u.input_tokens) + n(u.cache_read_input_tokens) + n(u.cache_creation_input_tokens) + n(u.output_tokens);
+        }
         for (const c of ev.message?.content ?? []) {
           if (c.type === 'text' && c.text?.trim()) {
             blocks.push({ kind: 'text', key: `${key}-${c.id ?? blocks.length}`, text: c.text });
@@ -131,6 +146,15 @@ export function derive(items: FeedItem[], roots: string[]): Derived {
       } else if (ev.type === 'rate_limit_event') {
         rateLimit = ev.rate_limit_info;
       } else if (ev.type === 'result') {
+        const u = ev.usage, t = use().total;
+        if (u) {
+          t.input += n(u.input_tokens); t.cacheRead += n(u.cache_read_input_tokens);
+          t.cacheWrite += n(u.cache_creation_input_tokens); t.output += n(u.output_tokens);
+          usage!.turns++;
+        }
+        const mu = ev.modelUsage as Record<string, { contextWindow?: number }> | undefined;
+        const w = mu && (mu[model ?? '']?.contextWindow ?? Object.values(mu)[0]?.contextWindow);
+        if (w) usage!.window = w;
         const secs = typeof ev.duration_ms === 'number' ? ` · ${(ev.duration_ms / 1000).toFixed(0)}s` : '';
         // Judge by is_error, never by subtype.
         if (ev.is_error) blocks.push({ kind: 'note', key, tone: 'bad', text: `Turn ended with an error (${ev.subtype})${secs}` });
@@ -157,7 +181,7 @@ export function derive(items: FeedItem[], roots: string[]): Derived {
       touched.set(rel, 'read');
     }
   }
-  return { blocks, partial, running, rateLimit, model, touched, ended };
+  return { blocks, partial, running, rateLimit, model, usage, touched, ended };
 }
 
 
