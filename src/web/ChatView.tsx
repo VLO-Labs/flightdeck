@@ -7,7 +7,8 @@ import remarkGfm from 'remark-gfm';
 import { FeedItem, MODELS, type Chat, type CheckResult, type MapNode, type PlanCheck, type MapViewId, type PlanFreshness, type PlanResponse, type ProcessGroup, type Project, type StoredMap } from '../shared/contracts.ts';
 import { applyPlan, type PlannedNode } from '../shared/plan.ts';
 import { splitCommand } from '../shared/shell.ts';
-import { actState, derive, groupActivities, groupSummary, str, type Activity, type ActState, type Approval, type RateLimit, type Usage } from './feedModel.ts';
+import { blockedReason, commandMenu, matchCommands, parseCommand, type MenuCommand, type ReportedCommands } from '../shared/commands.ts';
+import { actState, derive, groupActivities, groupSummary, str, type Activity, type ActState, type Approval, type Usage } from './feedModel.ts';
 import { api } from './api.ts';
 import { Crumbs, MapCanvas, nodesForFile, type Heat } from './MapCanvas.tsx';
 import { useMap, type NodeRef } from './MapView.tsx';
@@ -140,14 +141,30 @@ export function ChatView({ chat, project, onChanged, initialContext, chats, onSw
     pinBottom();
   };
 
+  // Slash commands: what Claude Code said it has (this chat's latest turn, else the project's), a
+  // menu while the first word is being typed, and a word on the ones Flightdeck won't send.
+  const [projectCommands, setProjectCommands] = useState<ReportedCommands | null>(null);
+  useEffect(() => { api.commands(project.id).then(setProjectCommands, () => {}); }, [project.id]);
+  const reported = d.commands ?? projectCommands ?? undefined;
+  const menu = useMemo(() => commandMenu(reported), [reported]);
+  const typedCommand = /^\/(\S*)$/.exec(draft)?.[1];
+  const [menuDismissed, setMenuDismissed] = useState<string | null>(null);
+  const matches = typedCommand !== undefined && draft !== menuDismissed ? matchCommands(menu, typedCommand) : [];
+  const [pick, setPick] = useState(0);
+  useEffect(() => setPick(0), [typedCommand]);
+  const command = parseCommand(draft);
+  const blocked = command ? blockedReason(command.name, reported) : undefined;
+  const choose = (m: MenuCommand) => setDraft(`/${m.name} `);
+
   const send = async () => {
     const text = draft.trim();
-    if (!text || d.running) return;
+    if (!text || d.running || blocked) return;
     setError('');
     try {
-      await api.send(chat.id, text, ctx.map(c => (isNodeRef(c) ? { view: c.view, nodeId: c.nodeId } : { doc: c.doc, ref: c.ref })));
+      // A command goes on its own; what's attached waits for the next message.
+      await api.send(chat.id, text, command ? [] : ctx.map(c => (isNodeRef(c) ? { view: c.view, nodeId: c.nodeId } : { doc: c.doc, ref: c.ref })));
       setDraft('');
-      setCtx([]);
+      if (!command) setCtx([]);
       toBottom();
     } catch (e) {
       setError((e as Error).message);
@@ -193,7 +210,6 @@ export function ChatView({ chat, project, onChanged, initialContext, chats, onSw
             setError('');
             try { setCur(await api.chatSettings(chat.id, { [field]: value })); } catch (e) { setError((e as Error).message); }
           }} />
-          {d.rateLimit && <RateLimitBadge r={d.rateLimit} />}
           {d.usage && <UsageBadge u={d.usage} />}
           {!connected && <span className="badge bad">reconnecting…</span>}
           <button
@@ -309,6 +325,22 @@ export function ChatView({ chat, project, onChanged, initialContext, chats, onSw
             : <><strong>Discuss</strong> — read-only: Claude reads and proposes; edits are refused.</>}
         </div>
         {error && <div className="error">{error}</div>}
+        {blocked && <div className="error">/{command!.name} isn’t available here. {blocked}</div>}
+        {command && !blocked && ctx.length > 0 && <div className="muted composer-hint">A command goes on its own — the attachments stay for your next message.</div>}
+        {matches.length > 0 && (
+          <div className="cmd-menu" role="listbox" aria-label="Claude Code commands">
+            {matches.map((m, i) => (
+              <button
+                key={m.name} role="option" aria-selected={i === pick} className={i === pick ? 'on' : ''}
+                ref={i === pick ? el => el?.scrollIntoView({ block: 'nearest' }) : undefined}
+                onMouseDown={e => { e.preventDefault(); choose(m); }} onMouseEnter={() => setPick(i)}
+              >
+                <span className="mono">/{m.name}</span>
+                <span className="muted">{m.description ?? 'skill'}</span>
+              </button>
+            ))}
+          </div>
+        )}
         {ctx.length > 0 && (
           <div className="chips composer-chips">
             {ctx.map(c => (
@@ -321,9 +353,24 @@ export function ChatView({ chat, project, onChanged, initialContext, chats, onSw
         )}
         <textarea
           value={draft}
-          placeholder={d.running ? 'Claude is working — stop it or wait for it to finish' : 'Message Claude Code (Enter to send, Shift+Enter for a new line)'}
+          placeholder={d.running ? 'Claude is working — stop it or wait for it to finish' : 'Message Claude Code (Enter to send, Shift+Enter for a new line, / for commands)'}
           onChange={e => setDraft(e.target.value)}
           onKeyDown={e => {
+            if (matches.length > 0) {
+              const m = matches[pick] ?? matches[0]!;
+              if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+                e.preventDefault();
+                setPick(p => (p + (e.key === 'ArrowDown' ? 1 : matches.length - 1)) % matches.length);
+                return;
+              }
+              if (e.key === 'Escape') { e.preventDefault(); setMenuDismissed(draft); return; }
+              // Enter on a name already typed in full sends it; otherwise it completes the name.
+              if (e.key === 'Tab' || (e.key === 'Enter' && !e.shiftKey && m.name !== typedCommand)) {
+                e.preventDefault();
+                choose(m);
+                return;
+              }
+            }
             if (e.key === 'Enter' && !e.shiftKey) {
               e.preventDefault();
               void send();
@@ -333,7 +380,7 @@ export function ChatView({ chat, project, onChanged, initialContext, chats, onSw
         />
         {d.running
           ? <button className="stop" onClick={() => api.stop(chat.id)}>Stop</button>
-          : <button onClick={send} disabled={!draft.trim()}>Send</button>}
+          : <button onClick={send} disabled={!draft.trim() || !!blocked}>Send</button>}
       </footer>
     </div>
     {showWorkspace && (
@@ -1105,12 +1152,3 @@ function UsageBadge({ u }: { u: Usage }) {
 const tokens = (x: number) =>
   x >= 1e6 ? `${+(x / 1e6).toFixed(x < 1e7 ? 1 : 0)}M` : x >= 1e3 ? `${Math.round(x / 1e3)}k` : String(x);
 
-function RateLimitBadge({ r }: { r: RateLimit }) {
-  const reset = r.resetsAt ? new Date(r.resetsAt * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
-  const ok = r.status === 'allowed';
-  return (
-    <span className={`badge ${ok ? '' : 'bad'}`} title={`Subscription ${r.rateLimitType ?? ''} window`}>
-      {ok ? 'plan OK' : `plan ${r.status}`}{reset ? ` · resets ${reset}` : ''}
-    </span>
-  );
-}

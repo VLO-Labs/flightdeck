@@ -12,6 +12,8 @@ import { MCP_SERVER } from './mcp.ts';
 import { approvedVersion, currentMaps, planStatusLine } from './plans.ts';
 import { planAsText } from '../shared/plan.ts';
 import { approvedRefsIn, proposalStatusLine, requirementsStatusLine, type RequirementContextItem } from './requirements.ts';
+import { parseCommand } from '../shared/commands.ts';
+import { recordCommands, recordLimits } from './claudeState.ts';
 
 const proposals = (chatId: number) => { const l = proposalStatusLine(chatId); return l ? `\n${l}` : ''; };
 
@@ -208,7 +210,9 @@ export function startTurn(chatId: number, text: string, initialContext: ContextI
     : approved ? `${BUILD_PROMPT}\n\n${PLAN_PROMPT}\n\n${planAsText(approved.body, approved.version, currentMaps(project))}${reqLines}`
     : `${BUILD_PROMPT}\n\n${planStatusLine(chatId)}${reqLines}`;
   const args = [
-    '-p', modeBlock(prompt) + contextBlock(context) + text,
+    // A slash command goes as typed: anything in front would make it plain text. The mode's
+    // instructions still reach the agent as the appended system prompt, and the hook still guards.
+    '-p', parseCommand(text) ? text.trim() : modeBlock(prompt) + contextBlock(context) + text,
     chat.started ? '--resume' : '--session-id', chat.sessionId,
     '--output-format', 'stream-json', '--verbose', '--include-partial-messages',
     '--settings', hookSettings(),
@@ -272,6 +276,8 @@ export function startTurn(chatId: number, text: string, initialContext: ContextI
       return;
     }
     feed.append(chatId, { kind: 'claude', at: now(), runId: run.id, event: ev });
+    if (ev.type === 'system' && ev.subtype === 'init') recordCommands(project.id, ev);
+    if (ev.type === 'rate_limit_event') recordLimits(ev.rate_limit_info, now());
 
     if (ev.type === 'result') {
       resultSeen = true;

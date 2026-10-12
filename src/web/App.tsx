@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { BrowseResponse, Chat, Project } from '../shared/contracts.ts';
-import { api } from './api.ts';
+import { z } from 'zod';
+import { api, type Limits } from './api.ts';
 import { tildify } from './paths.ts';
 import { ErrorBoundary } from './ErrorBoundary.tsx';
 import { STACKS } from '../shared/stacks.ts';
@@ -117,7 +118,7 @@ export function App() {
   return (
     <div className={`app ${chat && !navOpen ? 'chat-open' : ''}`}>
       <aside className="sidebar">
-        <div className="brand">Flightdeck <Clock /></div>
+        <Status />
 
         <label className="label">Project</label>
         <select value={projectId ?? ''} onChange={e => setProjectId(Number(e.target.value))}>
@@ -368,13 +369,55 @@ function localStorageSet(k: string, v: string) {
   try { localStorage.setItem(k, v); } catch { /* not essential */ }
 }
 
-// The time, always in view — next to the plan's "resets at" it says how long is left.
-function Clock() {
-  const fmt = () => new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-  const [now, setNow] = useState(fmt);
+// The time, and the plan's usage limits under it — account-wide, from Claude Code's latest turn in
+// any project — so a reset time can be read against the clock. A window whose reset has passed says
+// so instead of showing old numbers; fresh ones come with the next turn.
+function Status() {
+  const [now, setNow] = useState(() => Date.now());
+  const [limits, setLimits] = useState<z.infer<typeof Limits>>(null);
   useEffect(() => {
-    const t = setInterval(() => setNow(fmt()), 1000);
-    return () => clearInterval(t);
+    const tick = setInterval(() => setNow(Date.now()), 1000);
+    const load = () => api.limits().then(setLimits, () => {});
+    load();
+    const poll = setInterval(() => document.visibilityState === 'visible' && load(), 30_000);
+    return () => { clearInterval(tick); clearInterval(poll); };
   }, []);
-  return <time className="clock" title={new Date().toLocaleDateString([], { weekday: 'long', day: 'numeric', month: 'long' })}>{now}</time>;
+  const time = (ms: number) => new Date(ms).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  const when = (ms: number) => (new Date(ms).toDateString() === new Date(now).toDateString()
+    ? time(ms) : `${new Date(ms).toLocaleDateString([], { weekday: 'short' })} ${time(ms)}`);
+  const rows = limitRows(limits?.info);
+  return (
+    <div className="status">
+      <div className="brand">Flightdeck <time className="clock" title={new Date(now).toLocaleDateString([], { weekday: 'long', day: 'numeric', month: 'long' })}>{time(now)}</time></div>
+      {rows.length > 0 && (
+        <div className="limits" title={`Your plan's usage, as Claude Code reported it at ${time(Date.parse(limits!.at))}. It updates with every turn.`}>
+          {rows.map(r => {
+            const over = r.resetsAt !== undefined && r.resetsAt * 1000 <= now;
+            const tone = over ? 'muted' : r.blocked ? 'bad' : (r.used ?? 0) >= 0.8 ? 'warn-text' : '';
+            return (
+              <div key={r.label} className={`limit ${tone}`}>
+                <span>{r.label}</span>
+                {over
+                  ? <span>reset at {when(r.resetsAt! * 1000)}</span>
+                  : <span>{r.blocked ? 'limit reached' : r.used !== undefined ? `${Math.round(r.used * 100)}% used` : 'ok'}{r.resetsAt ? ` · resets ${when(r.resetsAt * 1000)}` : ''}</span>}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// The windows in a rate_limit_event: each with how much is used and when it resets.
+function limitRows(info: Record<string, unknown> | undefined): { label: string; used?: number; resetsAt?: number; blocked: boolean }[] {
+  if (!info) return [];
+  const label = (k: string) => ({ five_hour: '5-hour', seven_day: 'Week' } as Record<string, string>)[k] ?? k.replace(/_/g, ' ');
+  const num = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : undefined);
+  const blockedType = info.status !== 'allowed' ? String(info.rateLimitType ?? '') : '';
+  const windows = info.unifiedWindows && typeof info.unifiedWindows === 'object' ? Object.entries(info.unifiedWindows as Record<string, Record<string, unknown>>) : [];
+  if (windows.length) {
+    return windows.map(([k, w]) => ({ label: label(k), used: num(w?.utilization), resetsAt: num(w?.resetsAt), blocked: k === blockedType }));
+  }
+  return [{ label: label(String(info.rateLimitType ?? 'plan')), resetsAt: num(info.resetsAt), blocked: !!blockedType }];
 }

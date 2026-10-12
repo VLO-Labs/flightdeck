@@ -31,6 +31,8 @@ import { handleMcp } from './mcp.ts';
 import { approve, drop, plannedNode, planResponse, revalidate } from './plans.ts';
 import { startCheck } from './verify.ts';
 import { STACKS, requirementsKickoff, scaffoldPrompt } from '../shared/stacks.ts';
+import { blockedReason, parseCommand } from '../shared/commands.ts';
+import { latestLimits, projectCommands } from './claudeState.ts';
 
 const app = new Hono();
 const now = () => new Date().toISOString();
@@ -343,6 +345,13 @@ app.post('/api/chats/:id/messages', async c => {
   const body = SendMessage.safeParse(await c.req.json());
   if (!body.success) return c.json({ error: 'empty message' }, 400);
   const chat = db.select().from(chats).where(eq(chats.id, id)).get();
+  // A slash command goes to Claude Code as typed, so nothing can be attached to it.
+  const command = parseCommand(body.data.text);
+  if (command) {
+    const blocked = blockedReason(command.name, chat ? projectCommands(chat.projectId) : undefined);
+    if (blocked) return c.json({ error: `/${command.name} isn't available here. ${blocked}` }, 400);
+    if (body.data.context?.length) return c.json({ error: 'a command goes on its own — remove the attachments' }, 400);
+  }
   if (chat && chat.title === 'New chat') {
     const title = body.data.text.replace(/\s+/g, ' ').trim().slice(0, 60);
     db.update(chats).set({ title }).where(eq(chats.id, id)).run();
@@ -428,6 +437,10 @@ app.post('/api/chats/:id/plan/drop', c => {
   if (!cp) return c.json({ error: 'no such chat' }, 404);
   return drop(cp.chat.id, 'user') ? c.json(planResponse(cp.chat.id, cp.project)) : c.json({ error: 'nothing to drop' }, 409);
 });
+
+// The plan's usage limits as last reported by any turn, and what Claude Code has in a project.
+app.get('/api/limits', c => c.json(latestLimits() ?? null));
+app.get('/api/projects/:id/commands', c => c.json(projectCommands(Number(c.req.param('id'))) ?? null));
 
 app.post('/api/chats/:id/stop', c => c.json({ ok: stopTurn(Number(c.req.param('id'))) }));
 

@@ -113,7 +113,11 @@ closed (`< /dev/null`) or the CLI waits 3 s for piped input and prints a non-JSO
   are the truth; the agent's closing summary is not.
 - A `rate_limit_event` arrives each turn with the subscription's five-hour window status and
   reset time — the UI can show remaining headroom.
-  *As built:* the chat header shows it next to the chat's token use: "context 32k / 1M · 272k used".
+  *As built:* the limits are account-wide, so they sit in the sidebar under the clock ("5-hour 8%
+  used · resets 12:50 AM", "Week 26% used · resets Wed 3:00 PM", from `unifiedWindows`). The
+  server keeps the latest event from any turn in `claude-state.json` in the data folder
+  (`GET /api/limits`); a window whose reset has passed says "reset at …" until the next turn
+  brings numbers. The chat header shows the chat's own token use: "context 32k / 1M · 46k used".
   Context is the latest main-agent call's `usage` (input + cache read + cache write + output;
   subagent calls carry `parent_tool_use_id` and are skipped); the window comes from the turn's
   `result.modelUsage[model].contextWindow`; "used" is new input (uncached + cache writes) plus
@@ -121,6 +125,18 @@ closed (`< /dev/null`) or the CLI waits 3 s for piped input and prints a non-JSO
   conversation re-read on every call; they'd be ~95% of it) and only shown in the tooltip. A stopped
   turn has no result, so it isn't counted. Warn colour at 80% full. A clock sits in
   the sidebar next to the name.
+- **Slash commands.** A message starting with `/name` goes to the CLI as typed — with Flightdeck's
+  preamble in front it would be plain text; the mode's instructions still go as the appended system
+  prompt and the hook still guards. The CLI's `init` lists its commands and skills (kept per project
+  in `claude-state.json` for chats that haven't run yet); typing `/` opens a menu of the skills plus
+  the built-ins that work headless (`src/shared/commands.ts`, tested on 2.1.296: compact, context,
+  usage, recap, init, security-review, mcp, skill-doctor, insights). Refused, client and server:
+  `/clear` (a new conversation id Flightdeck wouldn't follow — New chat does it), `/model` (the
+  picker), settings commands (they'd change Claude Code for every session), terminal-only ones,
+  `/loop` and `/schedule` (a turn ends when Claude answers), `/ultrareview` (billed). Attachments
+  don't go with a command. Command output comes back as an assistant message or as
+  `<local-command-stdout|stderr>` in a user message (shown as a note); `/compact` emits
+  `compact_boundary` with pre/post tokens — shown as a line, and the context badge drops to it.
 
 **Node context.** Each diagram node selected as context becomes a short block in the prompt:
 name, one-line summary, the files it covers — so "this" is unambiguous.

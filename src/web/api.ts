@@ -19,6 +19,10 @@ export class ApiError extends Error {
   constructor(message: string, readonly status: number, readonly body: Record<string, unknown>) { super(message); }
 }
 
+// What Claude Code reported: a project's commands and skills; the plan's usage limits (any turn).
+const ReportedCommands = z.object({ commands: z.array(z.string()), skills: z.array(z.string()), terminal: z.array(z.string()).optional() }).nullable();
+export const Limits = z.object({ at: z.string(), info: z.record(z.string(), z.unknown()) }).nullable();
+
 export const api = {
   projects: () => call(z.array(Project), 'GET', '/api/projects'),
   browse: (path?: string) => call(BrowseResponse, 'GET', `/api/browse${path ? `?path=${encodeURIComponent(path)}` : ''}`),
@@ -55,6 +59,8 @@ export const api = {
   proposals: (projectId: number) => call(z.array(RequirementProposal), 'GET', `/api/projects/${projectId}/requirements/proposals`),
   decideProposal: (projectId: number, id: number, accept: boolean) =>
     call(RequirementProposal, 'POST', `/api/projects/${projectId}/requirements/proposals/${id}/${accept ? 'accept' : 'reject'}`),
+  commands: (projectId: number) => call(ReportedCommands, 'GET', `/api/projects/${projectId}/commands`),
+  limits: () => call(Limits, 'GET', '/api/limits'),
   processes: (projectId: number) => call(z.array(ProcessGroup), 'GET', `/api/projects/${projectId}/processes`),
   stopProcess: (projectId: number, pid: number) => call(Ok, 'POST', `/api/projects/${projectId}/processes/${pid}/stop`),
   rules: (projectId: number) => call(z.array(Rule), 'GET', `/api/projects/${projectId}/rules`),

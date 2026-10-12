@@ -1,6 +1,7 @@
 // The chat feed as the screen sees it: fold raw feed items into blocks, and settle each tool call's
 // state. Pure (no React), so it can be tested directly.
 import { MODELS, type FeedItem } from '../shared/contracts.ts';
+import type { ReportedCommands } from '../shared/commands.ts';
 import type { Heat } from './graph.ts';
 
 export type Approval = Extract<FeedItem, { kind: 'approval' }>;
@@ -18,7 +19,6 @@ export type Block =
   | { kind: 'plan'; key: string; versionId: number; version: number; title: string; counts: { added: number; changed: number; removed: number } }
   | { kind: 'check'; key: string; checkId: number; version: number; versionId?: number; counts: Record<string, number>; failed?: string };
 
-export type RateLimit = { status?: string; resetsAt?: number; rateLimitType?: string };
 // The chat's token use. context: what the latest model call carried — what the next message starts
 // from (it drops after a compaction); window: the model's context size, known once a turn has ended.
 // total: every finished turn's tokens added up, by kind.
@@ -28,7 +28,8 @@ export type Usage = {
 };
 // touched: repo-relative paths the latest run read or edited — what lights up the map.
 type Derived = {
-  blocks: Block[]; partial: string; running: boolean; rateLimit?: RateLimit; model?: string; usage?: Usage;
+  blocks: Block[]; partial: string; running: boolean; model?: string; usage?: Usage;
+  commands?: ReportedCommands; // what the CLI said it has, at the start of the latest turn
   touched: Map<string, Heat>;
   ended: Set<number>; // runs that are over (finished, failed or stopped)
 };
@@ -53,6 +54,17 @@ function toolResultText(content: unknown): string {
   return str(content);
 }
 
+// "<local-command-stdout>…</local-command-stdout>" (or -stderr): what a slash command printed. "Compacted"
+// is left out — the compact boundary already says it, with the numbers.
+function commandOutput(content: unknown): { text: string; error: boolean } | undefined {
+  const raw = typeof content === 'string' ? content
+    : Array.isArray(content) ? content.map(c => (c?.type === 'text' ? String(c.text) : '')).join('') : '';
+  const m = /<local-command-(stdout|stderr)>([\s\S]*?)<\/local-command-\1>/.exec(raw);
+  const text = m?.[2]?.trim();
+  if (!m || !text || (m[1] === 'stdout' && /^Compacted\b/.test(text))) return undefined;
+  return { text, error: m[1] === 'stderr' };
+}
+
 // Fold the feed into what the screen shows. Pure: same items → same picture, live or replayed.
 export function derive(items: FeedItem[], roots: string[]): Derived {
   const blocks: Block[] = [];
@@ -61,7 +73,7 @@ export function derive(items: FeedItem[], roots: string[]): Derived {
   const approvalBlocks = new Map<number, { kind: 'approval'; key: string; approval: Approval }>();
   let partial = '';
   let running = false;
-  let rateLimit: RateLimit | undefined;
+  let commands: ReportedCommands | undefined;
   let model: string | undefined;
   let usage: Usage | undefined;
   const use = () => (usage ??= { context: 0, turns: 0, total: { input: 0, cacheRead: 0, cacheWrite: 0, output: 0 } });
@@ -109,16 +121,23 @@ export function derive(items: FeedItem[], roots: string[]): Derived {
       const ev = it.event as Record<string, any>;
       if (ev.type === 'system' && ev.subtype === 'init') {
         model = ev.model;
+        const list = (v: unknown) => (Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : []);
+        if (Array.isArray(ev.slash_commands)) commands = { commands: list(ev.slash_commands), skills: list(ev.skills), terminal: list(ev.terminal_slash_commands) };
+      } else if (ev.type === 'system' && ev.subtype === 'compact_boundary') {
+        const m = ev.compact_metadata ?? {};
+        const k = (x: unknown) => `${Math.round(n(x) / 1000)}k`;
+        blocks.push({ kind: 'note', key, tone: 'muted', text: m.pre_tokens ? `Compacted the conversation: ${k(m.pre_tokens)} → ${k(m.post_tokens)} tokens` : 'Compacted the conversation' });
+        if (m.post_tokens) use().context = n(m.post_tokens);
       } else if (ev.type === 'stream_event') {
         const d = ev.event?.delta;
         if (ev.event?.type === 'content_block_delta' && d?.type === 'text_delta') partial += d.text;
         if (ev.event?.type === 'message_start') partial = '';
       } else if (ev.type === 'assistant') {
-        // A subagent's calls have their own context; only the chat's own model calls count here.
+        // A subagent's calls have their own context; only the chat's own model calls count here. A
+        // command answered without the model (/context, /usage) carries all-zero usage: not a call.
         const u = ev.message?.usage;
-        if (u && !ev.parent_tool_use_id) {
-          use().context = n(u.input_tokens) + n(u.cache_read_input_tokens) + n(u.cache_creation_input_tokens) + n(u.output_tokens);
-        }
+        const size = u ? n(u.input_tokens) + n(u.cache_read_input_tokens) + n(u.cache_creation_input_tokens) + n(u.output_tokens) : 0;
+        if (size && !ev.parent_tool_use_id) use().context = size;
         for (const c of ev.message?.content ?? []) {
           if (c.type === 'text' && c.text?.trim()) {
             blocks.push({ kind: 'text', key: `${key}-${c.id ?? blocks.length}`, text: c.text });
@@ -132,7 +151,10 @@ export function derive(items: FeedItem[], roots: string[]): Derived {
           }
         }
       } else if (ev.type === 'user') {
-        for (const c of ev.message?.content ?? []) {
+        // A command's own output (or its failure) comes back as a user message the CLI wrote.
+        const out = commandOutput(ev.message?.content);
+        if (out) blocks.push({ kind: 'note', key, tone: out.error ? 'bad' : 'muted', text: out.text });
+        for (const c of Array.isArray(ev.message?.content) ? ev.message.content : []) {
           if (c.type === 'tool_result') {
             const a = activities.get(c.tool_use_id);
             if (a) a.result = { text: toolResultText(c.content), isError: !!c.is_error };
@@ -143,8 +165,6 @@ export function derive(items: FeedItem[], roots: string[]): Derived {
         blocks.push({ kind: 'note', key, tone: 'bad', text: `Refused by Claude Code: ${ev.message ?? ev.tool_name}` });
       } else if (ev.type === 'system' && ev.subtype === 'task_started' && ev.is_backgrounded) {
         blocks.push({ kind: 'note', key, tone: 'muted', text: `Background task started: ${ev.description}` });
-      } else if (ev.type === 'rate_limit_event') {
-        rateLimit = ev.rate_limit_info;
       } else if (ev.type === 'result') {
         const u = ev.usage, t = use().total;
         if (u) {
@@ -181,7 +201,7 @@ export function derive(items: FeedItem[], roots: string[]): Derived {
       touched.set(rel, 'read');
     }
   }
-  return { blocks, partial, running, rateLimit, model, usage, touched, ended };
+  return { blocks, partial, running, model, usage, commands, touched, ended };
 }
 
 

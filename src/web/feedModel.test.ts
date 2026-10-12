@@ -64,5 +64,28 @@ test('token use: context from the latest call of the chat itself, totals from fi
   // Mid-turn: the context moves with each call; the totals wait for the turn to end.
   const mid = derive([...items, run(2, 'started'), ev(2, call(3, 11_000, 200, 7))], ['/repo']).usage!;
   assert.equal(mid.context, 11_210);
+  // A command answered locally reports zero usage; the context stays what it was.
+  const local = derive([...items, run(2, 'started'), ev(2, call(0, 0, 0, 0))], ['/repo']).usage!;
+  assert.equal(local.context, 10_542);
   assert.equal(mid.turns, 1);
+});
+
+test('commands: compaction, what a command printed or failed with, the command list', () => {
+  const ev = (event: { type: string; [k: string]: unknown }): FeedItem => ({ kind: 'claude', at, runId: 1, event });
+  const d = derive([
+    run(1, 'started'),
+    ev({ type: 'system', subtype: 'init', model: 'm', slash_commands: ['compact', 'debug'], skills: ['debug'], terminal_slash_commands: ['color'] }),
+    ev({ type: 'system', subtype: 'compact_boundary', compact_metadata: { trigger: 'manual', pre_tokens: 26_525, post_tokens: 3_046 } }),
+    ev({ type: 'user', message: { content: 'This session is being continued from a previous conversation…' } }),
+    ev({ type: 'user', message: { content: '<local-command-stdout>Compacted </local-command-stdout>' } }),
+    ev({ type: 'user', message: { content: '<local-command-stderr>Shell command failed: no origin/HEAD</local-command-stderr>' } }),
+    ev({ type: 'user', message: { content: [{ type: 'text', text: '<local-command-stdout>3 servers</local-command-stdout>' }] } }),
+  ], ['/repo']);
+  assert.deepEqual(d.blocks.map(b => b.kind === 'note' && [b.tone, b.text]), [
+    ['muted', 'Compacted the conversation: 27k → 3k tokens'],
+    ['bad', 'Shell command failed: no origin/HEAD'],
+    ['muted', '3 servers'],
+  ]);
+  assert.equal(d.usage?.context, 3_046);
+  assert.deepEqual(d.commands, { commands: ['compact', 'debug'], skills: ['debug'], terminal: ['color'] });
 });
