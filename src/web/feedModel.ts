@@ -21,7 +21,7 @@ export type Block =
 export type RateLimit = { status?: string; resetsAt?: number; rateLimitType?: string };
 // The chat's token use. context: what the latest model call carried — what the next message starts
 // from (it drops after a compaction); window: the model's context size, known once a turn has ended.
-// total: every finished turn's tokens added up, cache reads included.
+// total: every finished turn's tokens added up, by kind.
 export type Usage = {
   context: number; window?: number; turns: number;
   total: { input: number; cacheRead: number; cacheWrite: number; output: number };

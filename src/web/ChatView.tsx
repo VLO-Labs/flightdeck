@@ -1086,12 +1086,15 @@ const uptime = (secs: number) =>
 // How full the chat's context is, and the tokens its turns have used so far.
 function UsageBadge({ u }: { u: Usage }) {
   const t = u.total;
-  const used = t.input + t.cacheRead + t.cacheWrite + t.output;
+  // Used: what was new to the model plus what it wrote. Cache reads (the same conversation re-read on
+  // every call) would dwarf it, so they are only in the tooltip.
+  const used = t.input + t.cacheWrite + t.output;
   const full = u.window ? u.context / u.window : 0;
   const n = (x: number) => x.toLocaleString();
   const title = [
     `Context: ${n(u.context)}${u.window ? ` of ${n(u.window)} tokens (${Math.round(full * 100)}%)` : ' tokens'} — what the next message starts from.`,
-    `This chat so far (${u.turns} turn${u.turns === 1 ? '' : 's'}): ${n(t.input)} input, ${n(t.cacheRead)} read from cache, ${n(t.cacheWrite)} written to cache, ${n(t.output)} output.`,
+    `Used by this chat so far (${u.turns} turn${u.turns === 1 ? '' : 's'}): ${n(used)} — ${n(t.input + t.cacheWrite)} new input and ${n(t.output)} output.`,
+    `Not counted: ${n(t.cacheRead)} read from cache (the conversation re-read on every call).`,
   ].join('\n');
   return (
     <span className={`badge ${full >= 0.8 ? 'warn' : ''}`} title={title}>

@@ -116,8 +116,10 @@ closed (`< /dev/null`) or the CLI waits 3 s for piped input and prints a non-JSO
   *As built:* the chat header shows it next to the chat's token use: "context 32k / 1M · 272k used".
   Context is the latest main-agent call's `usage` (input + cache read + cache write + output;
   subagent calls carry `parent_tool_use_id` and are skipped); the window comes from the turn's
-  `result.modelUsage[model].contextWindow`; "used" adds up each finished turn's `result.usage`
-  (a stopped turn has no result, so it isn't counted). Warn colour at 80% full. A clock sits in
+  `result.modelUsage[model].contextWindow`; "used" is new input (uncached + cache writes) plus
+  output, added up over each finished turn's `result.usage` — cache reads are left out (the same
+  conversation re-read on every call; they'd be ~95% of it) and only shown in the tooltip. A stopped
+  turn has no result, so it isn't counted. Warn colour at 80% full. A clock sits in
   the sidebar next to the name.
 
 **Node context.** Each diagram node selected as context becomes a short block in the prompt:
