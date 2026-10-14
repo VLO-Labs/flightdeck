@@ -292,6 +292,10 @@ request or job runs through the system).
 - **Change detection**: `git diff --name-only <map commit>` plus untracked files (excluding
   `.flightdeck/`), matched against node files (a directory covers everything under it); stale
   nodes and their ancestors are marked. If the map's commit no longer exists, every node is stale.
+  Since 2026-10-13 a map also records the same baseline a plan does (§10: HEAD plus a content hash of
+  every uncommitted file), so work that was uncommitted when it was drawn isn't counted as change —
+  a fresh map of a repo with much uncommitted work had shown dozens of changed files. Maps made
+  before that leave out files not modified since `generatedAt`.
 - **File viewer**: read-only, resolved with `realpath` and refused outside the project or inside
   `.git`; directories list git-known files.
 - **First real run** — Flightdeck mapping itself on Opus 5.5: architecture 23 nodes in 50 s,

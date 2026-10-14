@@ -1,8 +1,5 @@
 // Plans, the stored part (PLAN.md §10): versions saved per chat, the baseline each was made against,
 // whether it still holds, and approval. Nothing here writes map files or source files.
-import { execFileSync } from 'node:child_process';
-import { existsSync } from 'node:fs';
-import { join } from 'node:path';
 import { and, desc, eq } from 'drizzle-orm';
 import {
   MAP_VIEWS, PlanBaseline, PlanBody, StoredMap,
@@ -10,12 +7,11 @@ import {
 } from '../shared/contracts.ts';
 import { coversFile, planCounts, planFiles, validatePlan, type Maps } from '../shared/plan.ts';
 import { db, planVersions, plans } from './db.ts';
-import { git, head, mapsDir, readMap, repoDirs } from './maps.ts';
+import { changedSinceRepos, mapsDir, readMap, repoBaselines } from './maps.ts';
 import { latestCheck } from './verify.ts';
 import * as feed from './feed.ts';
 
 const now = () => new Date().toISOString();
-const ABSENT = 'absent';
 
 type Project = { id: number; path: string; mapsRepo: string | null };
 
@@ -35,38 +31,9 @@ export function currentMaps(project: Project): Maps {
 // Baselines
 // ---------------------------------------------------------------------------------------------
 
-const lines = (s: string) => s.split('\n').filter(Boolean);
-const notMaps = (f: string) => !f.startsWith('.flightdeck/');
-
-// Content hashes of files in a repository, as git computes them; a missing file is "absent".
-function hashFiles(dir: string, files: string[]): Record<string, string> {
-  const out: Record<string, string> = {};
-  const present = files.filter(f => existsSync(join(dir, f)));
-  for (const f of files) if (!present.includes(f)) out[f] = ABSENT;
-  if (present.length) {
-    const hashes = lines(execFileSync('git', ['hash-object', '--stdin-paths'], { cwd: dir, input: present.join('\n'), encoding: 'utf8', maxBuffer: 16 << 20 }));
-    present.forEach((f, i) => (out[f] = hashes[i]!));
-  }
-  return out;
-}
-
-const untracked = (dir: string) => lines(git(dir, ['ls-files', '--others', '--exclude-standard']));
-
-// What differs from HEAD in a repository right now: modified, deleted and untracked files.
-function dirtyFiles(dir: string, base: string | null): string[] {
-  const tracked = base ? lines(git(dir, ['diff', '--name-only', base, '--'])) : lines(git(dir, ['ls-files']));
-  return [...new Set([...tracked, ...untracked(dir)])].filter(notMaps);
-}
-
 export function captureBaseline(project: Project, maps: Maps): PlanBaseline {
-  const repos: PlanBaseline['repos'] = {};
-  for (const r of repoDirs(project.path)) {
-    const dir = join(project.path, r);
-    const h = head(dir);
-    repos[r] = { head: h, dirty: hashFiles(dir, dirtyFiles(dir, h)) };
-  }
   return {
-    repos,
+    repos: repoBaselines(project.path),
     maps: Object.fromEntries(MAP_VIEWS.map(v => {
       const m = maps[v.id];
       return [v.id, m ? { generatedAt: m.generatedAt, commit: m.commit } : null];
@@ -77,27 +44,8 @@ export function captureBaseline(project: Project, maps: Maps): PlanBaseline {
 
 // Files whose content differs from what they were at the baseline, relative to the project.
 // null = a commit the baseline names is gone, so what changed can't be known.
-export function changedSinceBaseline(project: Project, baseline: PlanBaseline): string[] | null {
-  const out: string[] = [];
-  const prefix = (r: string, f: string) => (r ? `${r}/${f}` : f);
-  for (const r of new Set([...repoDirs(project.path), ...Object.keys(baseline.repos)])) {
-    const dir = join(project.path, r);
-    const b = baseline.repos[r];
-    if (!existsSync(dir)) { out.push(...Object.keys(b?.dirty ?? {}).map(f => prefix(r, f))); continue; }
-    if (!b) { out.push(...lines(git(dir, ['ls-files', '-co', '--exclude-standard'])).filter(notMaps).map(f => prefix(r, f))); continue; }
-    if (b.head) {
-      try { git(dir, ['cat-file', '-e', `${b.head}^{commit}`]); } catch { return null; }
-    }
-    // A file that wasn't dirty at the baseline had its HEAD content then; if it differs from that HEAD
-    // now, it changed. A file that was dirty is compared by content hash.
-    const differs = dirtyFiles(dir, b.head);
-    const hashes = hashFiles(dir, Object.keys(b.dirty));
-    const changed = new Set(differs.filter(f => !(f in b.dirty)));
-    for (const [f, hash] of Object.entries(b.dirty)) if (hashes[f] !== hash) changed.add(f);
-    out.push(...[...changed].map(f => prefix(r, f)));
-  }
-  return out;
-}
+export const changedSinceBaseline = (project: Project, baseline: PlanBaseline): string[] | null =>
+  changedSinceRepos(project.path, baseline.repos);
 
 export function freshness(project: Project, body: PlanBody, baseline: PlanBaseline, maps: Maps): PlanFreshness {
   const changed = changedSinceBaseline(project, baseline);

@@ -5,7 +5,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
-import { changedSince, generatorDecision, mapsDir, moveMaps, repoDirs, repoFiles, staleNodeIds, validateMap } from './maps.ts';
+import { changedSince, generatorDecision, mapsDir, moveMaps, repoBaselines, repoDirs, repoFiles, staleNodeIds, validateMap } from './maps.ts';
 
 const node = (id: string, parent: string | null, files: string[] = []): MapNode =>
   ({ id, parent, label: id, kind: 'module', summary: '', files, fields: [] });
@@ -73,11 +73,41 @@ test('a folder of repositories is one project: files are prefixed per repo, chan
     assert.deepEqual(repoFiles(root).sort(), ['CLAUDE.md', 'api/main.ts', 'web/main.ts']);
 
     const commits = { api: sh(join(root, 'api'), 'rev-parse', 'HEAD'), web: sh(join(root, 'web'), 'rev-parse', 'HEAD') };
-    const map = { commit: null, commits, generatedAt: new Date(Date.now() + 60_000).toISOString() };
+    const map = { commit: null, commits, repos: repoBaselines(root), generatedAt: new Date(Date.now() + 60_000).toISOString() };
     assert.deepEqual(changedSince(root, map), []);
     writeFileSync(join(root, 'web', 'main.ts'), 'y');
     assert.deepEqual(changedSince(root, map), ['web/main.ts']);
-    assert.equal(changedSince(root, { ...map, commits: { ...commits, api: 'f'.repeat(40) } }), null); // commit gone
+    assert.equal(changedSince(root, { ...map, repos: { ...map.repos, api: { head: 'f'.repeat(40), dirty: {} } } }), null); // commit gone
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('uncommitted work already there when the map was made is not a change; editing it again is', () => {
+  const root = mkdtempSync(join(tmpdir(), 'fd-dirty-'));
+  const sh = (...args: string[]) => execFileSync('git', args, { cwd: root, encoding: 'utf8' }).trim();
+  try {
+    writeFileSync(join(root, 'a.ts'), 'x');
+    writeFileSync(join(root, 'b.ts'), 'x');
+    sh('init', '-q', '-b', 'main');
+    sh('add', '.');
+    sh('-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-qm', 'x');
+    writeFileSync(join(root, 'a.ts'), 'edited before the map');
+    writeFileSync(join(root, 'new.ts'), 'untracked before the map');
+
+    const map = { commit: sh('rev-parse', 'HEAD'), repos: repoBaselines(root), generatedAt: new Date().toISOString() };
+    assert.deepEqual(changedSince(root, map), []);
+    sh('add', '.');
+    sh('-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-qm', 'y'); // committing it unchanged isn't a change either
+    assert.deepEqual(changedSince(root, map), []);
+    writeFileSync(join(root, 'new.ts'), 'edited after');
+    writeFileSync(join(root, 'b.ts'), 'edited after');
+    assert.deepEqual(changedSince(root, map)!.sort(), ['b.ts', 'new.ts']);
+
+    // A map from before baselines: files not modified since it was made are left out.
+    const old = { commit: map.commit, generatedAt: new Date(Date.now() + 60_000).toISOString() };
+    assert.deepEqual(changedSince(root, old), []);
+    assert.deepEqual(changedSince(root, { ...old, generatedAt: '2000-01-01T00:00:00Z' })!.sort(), ['a.ts', 'b.ts', 'new.ts']);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

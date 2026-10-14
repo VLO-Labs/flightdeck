@@ -9,7 +9,7 @@ import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import {
   ClaudeEvent, GeneratedMap, MAP_VIEWS, StoredMap,
-  type MapEdge, type MapJob, type MapNode, type MapViewId,
+  type MapEdge, type MapJob, type MapNode, type MapViewId, type RepoBaseline,
 } from '../shared/contracts.ts';
 import { config } from './config.ts';
 import { evaluate, type Verdict } from './rules.ts';
@@ -238,30 +238,97 @@ function heads(path: string): { commit: string | null; commits?: Record<string, 
   return { commit: null, commits };
 }
 
-// Files changed since the map was made, committed or not. `null` = a commit it was made from is gone.
-export function changedSince(path: string, map: Pick<StoredMap, 'commit' | 'commits' | 'generatedAt'>): string[] | null {
-  if (!map.commits) return repoChangedSince(path, map.commit);
-  const out: string[] = [];
-  for (const r of repoDirs(path)) {
-    const commit = map.commits[r];
-    // A repository added (or first committed) since the map: everything in it is new.
-    if (!commit) { out.push(...lsFiles(join(path, r)).map(f => `${r}/${f}`)); continue; }
-    const since = repoChangedSince(join(path, r), commit);
-    if (since === null) return null;
-    out.push(...since.map(f => `${r}/${f}`));
+// ---------------------------------------------------------------------------------------------
+// Baselines: what each repository looked like at a moment, so later change is measured from it
+// ---------------------------------------------------------------------------------------------
+
+const lines = (s: string) => s.split('\n').filter(Boolean);
+const notMaps = (f: string) => !f.startsWith('.flightdeck/');
+const ABSENT = 'absent';
+
+// Content hashes of files in a repository, as git computes them; a missing file is "absent".
+function hashFiles(dir: string, files: string[]): Record<string, string> {
+  const out: Record<string, string> = {};
+  const present = files.filter(f => existsSync(join(dir, f)));
+  for (const f of files) if (!present.includes(f)) out[f] = ABSENT;
+  if (present.length) {
+    const hashes = lines(execFileSync('git', ['hash-object', '--stdin-paths'], { cwd: dir, input: present.join('\n'), encoding: 'utf8', maxBuffer: 16 << 20 }));
+    present.forEach((f, i) => (out[f] = hashes[i]!));
   }
-  // Loose top-level files have no git history; go by modification time.
-  const at = Date.parse(map.generatedAt);
-  out.push(...looseFiles(path).filter(f => statSync(join(path, f)).mtimeMs > at));
   return out;
+}
+
+// What differs from `base` in a repository right now: modified, deleted and untracked files.
+function dirtyFiles(dir: string, base: string | null): string[] {
+  const tracked = base ? lines(git(dir, ['diff', '--name-only', base, '--'])) : lines(git(dir, ['ls-files']));
+  return [...new Set([...tracked, ...lines(git(dir, ['ls-files', '--others', '--exclude-standard']))])].filter(notMaps);
+}
+
+export function repoBaselines(path: string): Record<string, RepoBaseline> {
+  const repos: Record<string, RepoBaseline> = {};
+  for (const r of repoDirs(path)) {
+    const dir = join(path, r);
+    const h = head(dir);
+    repos[r] = { head: h, dirty: hashFiles(dir, dirtyFiles(dir, h)) };
+  }
+  return repos;
+}
+
+// Files whose content differs from the baseline, relative to the project.
+// null = a commit the baseline names is gone, so what changed can't be known.
+export function changedSinceRepos(path: string, repos: Record<string, RepoBaseline>): string[] | null {
+  const out: string[] = [];
+  const prefix = (r: string, f: string) => (r ? `${r}/${f}` : f);
+  for (const r of new Set([...repoDirs(path), ...Object.keys(repos)])) {
+    const dir = join(path, r);
+    const b = repos[r];
+    if (!existsSync(dir)) { out.push(...Object.keys(b?.dirty ?? {}).map(f => prefix(r, f))); continue; }
+    if (!b) { out.push(...lsFiles(dir).filter(notMaps).map(f => prefix(r, f))); continue; }
+    if (b.head) {
+      try { git(dir, ['cat-file', '-e', `${b.head}^{commit}`]); } catch { return null; }
+    }
+    // A file that wasn't dirty at the baseline had its HEAD content then; if it differs from that HEAD
+    // now, it changed. A file that was dirty is compared by content hash.
+    const differs = dirtyFiles(dir, b.head);
+    const hashes = hashFiles(dir, Object.keys(b.dirty));
+    const changed = new Set(differs.filter(f => !(f in b.dirty)));
+    for (const [f, hash] of Object.entries(b.dirty)) if (hashes[f] !== hash) changed.add(f);
+    out.push(...[...changed].map(f => prefix(r, f)));
+  }
+  return out;
+}
+
+// Files changed since the map was made, committed or not. `null` = a commit it was made from is gone.
+export function changedSince(path: string, map: Pick<StoredMap, 'commit' | 'commits' | 'repos' | 'generatedAt'>): string[] | null {
+  const at = Date.parse(map.generatedAt);
+  const single = isSingleRepo(path);
+  // Loose top-level files of a multi-repo folder have no git history; go by modification time.
+  const loose = () => single ? [] : looseFiles(path).filter(f => statSync(join(path, f)).mtimeMs > at);
+  if (map.repos) {
+    const since = changedSinceRepos(path, map.repos);
+    return since && [...since, ...loose()];
+  }
+  // Older maps recorded only HEAD, so uncommitted work that was already there when the map was made
+  // can't be told apart by content; a file untouched since then (by modification time) is left out.
+  const out: string[] = [];
+  const keys = map.commits ? repoDirs(path) : [''];
+  for (const r of keys) {
+    const commit = map.commits ? map.commits[r] : map.commit;
+    const dir = join(path, r);
+    // A repository added (or first committed) since the map: everything in it is new.
+    if (map.commits && !commit) { out.push(...lsFiles(dir).map(f => `${r}/${f}`)); continue; }
+    const since = repoChangedSince(dir, commit ?? null);
+    if (since === null) return null;
+    const touched = since.filter(f => { try { return statSync(join(dir, f)).mtimeMs > at; } catch { return true; } });
+    out.push(...touched.map(f => (r ? `${r}/${f}` : f)));
+  }
+  return [...out, ...loose()];
 }
 
 function repoChangedSince(path: string, commit: string | null): string[] | null {
   if (!commit) return null;
   try { git(path, ['cat-file', '-e', `${commit}^{commit}`]); } catch { return null; }
-  const diff = git(path, ['diff', '--name-only', commit, '--']).split('\n');
-  const untracked = git(path, ['ls-files', '--others', '--exclude-standard']).split('\n');
-  return [...new Set([...diff, ...untracked])].filter(f => f && !f.startsWith('.flightdeck/'));
+  return dirtyFiles(path, commit);
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -340,6 +407,7 @@ export function startGeneration(project: { id: number; path: string; discussMode
   };
   jobs.set(project.id, job);
   const { commit, commits } = heads(project.path);
+  const baseline = repoBaselines(project.path); // taken before the agent reads, like the commits
   const repos = repoDirs(project.path);
   // In a multi-repo folder git only works inside each repository; say so, or the agent starts with a
   // `git ls-files` at the top that fails.
@@ -404,7 +472,7 @@ export function startGeneration(project: { id: number; path: string; discussMode
       const v = validateMap(gen.data, repoFiles(project.path));
       if (!v.ok) return fail(`map rejected: ${v.error}`);
       const stored: StoredMap = {
-        version: 1, view, generatedAt: now(), commit, ...(commits ? { commits } : {}), model: project.discussModel,
+        version: 1, view, generatedAt: now(), commit, ...(commits ? { commits } : {}), repos: baseline, model: project.discussModel,
         warnings: v.warnings, nodes: v.nodes, edges: v.edges,
       };
       mkdirSync(mapsDir(project), { recursive: true });

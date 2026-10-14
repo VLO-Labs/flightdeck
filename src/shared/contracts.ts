@@ -227,12 +227,18 @@ export type MapEdge = z.infer<typeof MapEdge>;
 export const GeneratedMap = z.object({ nodes: z.array(MapNode), edges: z.array(MapEdge) });
 
 // What Flightdeck stores.
+// A repository as it stood at some moment: HEAD, and a content hash of every file that differed from it
+// (modified, deleted = "absent", untracked). Uncommitted work then doesn't read as change later.
+export const RepoBaseline = z.object({ head: z.string().nullable(), dirty: z.record(z.string(), z.string()) });
+export type RepoBaseline = z.infer<typeof RepoBaseline>;
+
 export const StoredMap = GeneratedMap.extend({
   version: z.literal(1),
   view: MapViewId,
   generatedAt: z.string(),
   commit: z.string().nullable(), // HEAD when generated — the base for change detection
   commits: z.record(z.string(), z.string()).optional(), // multi-repo folder: each repository's HEAD instead
+  repos: z.record(z.string(), RepoBaseline).optional(), // each repository ('' = the project itself) when generated; older maps lack it
   model: z.string(),
   warnings: z.array(z.string()),
 });
@@ -313,7 +319,7 @@ export type PlanBody = z.infer<typeof PlanBody>;
 // The code and maps a version was made against: each repository's HEAD and its working-tree changes
 // at that moment (path → content hash; "absent" for a deleted file), and each map it refers to.
 export const PlanBaseline = z.object({
-  repos: z.record(z.string(), z.object({ head: z.string().nullable(), dirty: z.record(z.string(), z.string()) })),
+  repos: z.record(z.string(), RepoBaseline),
   maps: z.record(z.string(), z.object({ generatedAt: z.string(), commit: z.string().nullable() }).nullable()),
   takenAt: z.string(),
 });
