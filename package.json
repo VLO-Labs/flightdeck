@@ -1,6 +1,7 @@
 {
   "name": "flightdeck",
   "private": true,
+  "license": "MIT",
   "type": "module",
   "scripts": {
     "dev:server": "tsx watch src/server/main.ts",

@@ -110,6 +110,9 @@ engineering instructions; the PRD says what the software must do.
 - **Links** in the documents: `[name](src/file.ts#L10)` opens the file, `[name](map:architecture/<node-id>)`
   shows the node on its map.
 
+## License
+[MIT](LICENSE).
+
 ## History
 - **2026-10-10** — idea scoped in a Claude Code session: IDE replacement for an
   architecture-first / vibe-coding workflow. Named Flightdeck. Phase 1 = projects, diagrams,
