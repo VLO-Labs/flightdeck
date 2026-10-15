@@ -8,22 +8,29 @@
 #   Log        ~/Library/Logs/Flightdeck.log
 #
 # Flightdeck.app is a normal Mac app (scripts/mac/FlightdeckApp.swift): opening it starts the server
-# on http://flightdeck.localhost:8100 and opens the browser; quitting it stops the server.
+# on http://flightdeck.localhost:8100 (by default) and opens the browser; quitting it stops the server.
 # Re-run this script after pulling changes; it quits and reopens a running app.
+#
+# Settings come from the repo's .env (see .env.example) or the environment: FLIGHTDECK_PORT,
+# FLIGHTDECK_HOST_NAME, FLIGHTDECK_BARE_HOST, FLIGHTDECK_FORWARD_PORT, CLAUDE_BIN here; the rest
+# reach the server through the copy of .env installed beside the app code.
 set -euo pipefail
 REPO="$(cd "$(dirname "$0")/../.." && pwd)"
+if [ -f "$REPO/.env" ]; then set -a; . "$REPO/.env"; set +a; fi
 HOME_DIR="$HOME/Library/Application Support/Flightdeck"
 APPS=/Applications; [ -w "$APPS" ] || APPS="$HOME/Applications"
 APP_BUNDLE="$APPS/Flightdeck.app"
 LOG="$HOME/Library/Logs/Flightdeck.log"
 # Not 80: macOS lets an ordinary app take port 80 only on every interface (the LAN), never on
 # loopback alone, and Flightdeck must stay loopback-only. scripts/mac/port80.sh gives it a port-less
-# address instead: http://flightdeck.vlolabs (its own loopback IP, port 80 → 8101).
+# address instead (FLIGHTDECK_BARE_HOST: its own loopback IP, port 80 → FLIGHTDECK_FORWARD_PORT).
 PORT="${FLIGHTDECK_PORT:-8100}"
 HOST_NAME="${FLIGHTDECK_HOST_NAME:-flightdeck.localhost}" # *.localhost needs no /etc/hosts entry
+BARE_HOST="${FLIGHTDECK_BARE_HOST:-}"
+FORWARD_PORT="${FLIGHTDECK_FORWARD_PORT:-8101}"
 NODE="$(command -v node)" || { echo "node not found" >&2; exit 1; }
-CLAUDE="$HOME/.local/bin/claude"
-[ -x "$CLAUDE" ] || { echo "Claude Code not found at $CLAUDE (install it and run 'claude' once to log in)" >&2; exit 1; }
+CLAUDE="${CLAUDE_BIN:-$(command -v claude || echo "$HOME/.local/bin/claude")}"
+[ -x "$CLAUDE" ] || { echo "Claude Code not found at $CLAUDE (install it and run 'claude' once to log in, or set CLAUDE_BIN)" >&2; exit 1; }
 
 # Never under a busy server: updating replaces its files (node_modules included) and restarts it,
 # which would end a chat turn or map refresh in flight. Claude runs as the server's child.
@@ -44,6 +51,8 @@ rm -f "$HOME/Library/LaunchAgents/com.vlolabs.flightdeck.plist"
 echo "→ copying the app to $HOME_DIR/app"
 mkdir -p "$HOME_DIR/app" "$HOME_DIR/data" "$HOME/Library/Logs" "$APPS"
 rsync -a --delete --exclude .git --exclude .env --exclude node_modules --exclude dist --exclude data "$REPO/" "$HOME_DIR/app/"
+# The server reads .env from its working directory, so the repo's settings travel with the code.
+if [ -f "$REPO/.env" ]; then cp "$REPO/.env" "$HOME_DIR/app/.env"; else rm -f "$HOME_DIR/app/.env"; fi
 echo "→ installing dependencies and building"
 (cd "$HOME_DIR/app" && npm ci --no-audit --no-fund --loglevel=error && npx vite build --logLevel error)
 
@@ -61,6 +70,16 @@ mkdir -p "$APP_BUNDLE/Contents/MacOS" "$APP_BUNDLE/Contents/Resources"
 mv "$BUILD/Flightdeck" "$APP_BUNDLE/Contents/MacOS/Flightdeck"
 iconutil -c icns "$BUILD/Flightdeck.iconset" -o "$APP_BUNDLE/Contents/Resources/Flightdeck.icns"
 rm -rf "$BUILD"
+# macOS blocks an app's plain-http requests to domain names (localhost and IPs are exempt); the app
+# checks http://$BARE_HOST/health before opening it, so that name needs an exception.
+ATS=""
+[ -n "$BARE_HOST" ] && ATS="  <key>NSAppTransportSecurity</key><dict>
+    <key>NSExceptionDomains</key><dict>
+      <key>$BARE_HOST</key><dict>
+        <key>NSExceptionAllowsInsecureHTTPLoads</key><true/>
+      </dict>
+    </dict>
+  </dict>"
 # FD* keys are the app's settings (read by FlightdeckApp.swift).
 cat > "$APP_BUNDLE/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
@@ -80,22 +99,14 @@ cat > "$APP_BUNDLE/Contents/Info.plist" <<PLIST
   <key>FDClaude</key><string>$CLAUDE</string>
   <key>FDPort</key><string>$PORT</string>
   <key>FDHost</key><string>$HOST_NAME</string>
-  <key>FDForwardPort</key><string>8101</string>
-  <key>FDBareHost</key><string>flightdeck.vlolabs</string>
-  <!-- macOS blocks an app's plain-http requests to domain names (localhost and IPs are exempt);
-       the app checks http://flightdeck.vlolabs/health before opening it. -->
-  <key>NSAppTransportSecurity</key><dict>
-    <key>NSExceptionDomains</key><dict>
-      <key>flightdeck.vlolabs</key><dict>
-        <key>NSExceptionAllowsInsecureHTTPLoads</key><true/>
-      </dict>
-    </dict>
-  </dict>
+  <key>FDForwardPort</key><string>$FORWARD_PORT</string>
+  <key>FDBareHost</key><string>$BARE_HOST</string>
   <key>FDLog</key><string>$LOG</string>
+$ATS
 </dict></plist>
 PLIST
 codesign --force --sign - "$APP_BUNDLE" >/dev/null 2>&1 || true # ad-hoc, so macOS treats it as one app
 touch "$APP_BUNDLE"
 
 [ -n "$WAS_RUNNING" ] && { echo "→ reopening Flightdeck"; open "$APP_BUNDLE"; }
-echo "✓ Flightdeck installed: $APP_BUNDLE (or Spotlight: Flightdeck)."
+echo "✓ Flightdeck installed: $APP_BUNDLE (or Spotlight: Flightdeck) — http://$HOST_NAME:$PORT"

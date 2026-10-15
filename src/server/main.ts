@@ -95,7 +95,7 @@ app.post('/api/projects', async c => {
   return c.json(toProject(insertProject(body.data.name || basename(path), path)));
 });
 
-// Projects live under config.browseRoot (the box's ~/dev). True when `path` is there once symlinks
+// Projects live under config.browseRoot (~/dev by default). True when `path` is there once symlinks
 // are resolved; a folder that doesn't exist yet is judged by its nearest existing parent.
 const isInside = (realRoot: string, real: string) => real === realRoot || real.startsWith(realRoot + '/');
 function underBrowseRoot(path: string): boolean {
@@ -135,7 +135,8 @@ app.get('/api/browse', c => {
   return c.json({
     path: shown(real),
     parent: real === realRoot ? null : shown(join(real, '..')),
-    addable: real !== realRoot && repoDirs(real).length > 0, // ~/dev itself is never one project
+    newProjectsDir: config.newProjectsDir,
+    addable: real !== realRoot && repoDirs(real).length > 0, // the browse root itself is never one project
     dirs,
   } satisfies BrowseResponse);
 });

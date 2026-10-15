@@ -22,7 +22,7 @@ are produced by the agent from the code, never authored.
 | Decision | Choice | Why | Status |
 |---|---|---|---|
 | Home | Own repo, not an HQ module | HQ is the business back-office; this is a dev tool | decided |
-| Repo | `~/dev/vlolabs/flightdeck`, private `VLO-Labs/flightdeck` on GitHub | — | decided |
+| Repo | `VLO-Labs/flightdeck` on GitHub — private at first, **public since 2026-10-14**; nothing machine-specific is hardcoded, settings come from `.env` (see §12) | — | decided |
 | Runs on | **The box**, everything (UI + backend) | The `claude` CLI, its login, the repos and long-running agent processes all live there; Workers can't run a CLI. Splitting the UI onto Pages adds auth on two sides for no gain | decided |
 | Front door | Cloudflare Tunnel + the shared SSO gateway, service bound to **loopback** | It is effectively a shell with Hayk's credentials — never public | decided |
 | Process model | **Native systemd service** as `vlolabs`, not Docker | The agent needs the real environment: `~/dev`, `claude` login, `gh`, `make`. A container would mount all of it back in | decided |
@@ -250,7 +250,7 @@ through subscription credentials, collecting/storing/intermediating Claude.ai cr
 docs don't name personal self-built tools explicitly; Flightdeck stays inside the allowed case by
 three rules:
 1. it runs the **unmodified `claude` CLI** (not the Agent SDK, which the docs steer to API keys),
-2. **only Hayk** uses it,
+2. **one person** uses it — the owner of the machine and of the subscription login it drives,
 3. it **never reads or touches** `~/.claude/.credentials.json`.
 
 If it ever serves anyone else, it moves to API-key auth.
@@ -575,3 +575,24 @@ them and the undecided points (stock limits, accounts, slots) as open questions.
 ### Not in v1
 Automatic requirement ↔ code traceability; a diff of the file against its approved version; editing
 a proposal before accepting it; attached context surviving a reload; requirement ids in the URL.
+
+## 12. Configuration (as built 2026-10-14)
+
+When the repo went public, everything that named the author's machine (the `vlolabs` project
+folder, the `flightdeck.vlolabs` address, the Claude Code path) became a setting:
+
+- **One place reads them:** `src/server/config.ts`. It loads a `.env` file from the server's
+  working directory (or `FLIGHTDECK_ENV_FILE`) with Node's `process.loadEnvFile`, so a variable
+  already in the environment wins over the file. `~` at the start of a path means the home folder.
+  `.env` is gitignored; `.env.example` documents every variable and its default.
+- **The Mac scripts read the same file.** `install.sh` sources the repo's `.env`, bakes the address
+  (`FLIGHTDECK_PORT`, `FLIGHTDECK_HOST_NAME`, `FLIGHTDECK_BARE_HOST`, `FLIGHTDECK_FORWARD_PORT`) and
+  `CLAUDE_BIN` into Flightdeck.app's Info.plist, and copies `.env` beside the installed code so the
+  server gets the rest. `port80.sh` refuses to run until `FLIGHTDECK_BARE_HOST` is set; `stop.sh`
+  reads the port.
+- **Names the guard accepts** (`guard.ts`): loopback, `*.localhost`, `FLIGHTDECK_HOSTNAMES` and
+  `FLIGHTDECK_BARE_HOST`. No name is built in any more.
+- **New projects** go to `FLIGHTDECK_PROJECTS_DIR` (default: the browse root); the server tells the
+  UI through `/api/browse`, so the form proposes `<dir>/<slug>`.
+- **Claude Code** is found at `CLAUDE_BIN`, else `~/.local/bin/claude` if it exists, else `claude`
+  on `PATH`.

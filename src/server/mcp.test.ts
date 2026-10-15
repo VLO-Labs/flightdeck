@@ -17,5 +17,5 @@ test('no token, or a token no running Discuss turn holds, is refused', async () 
 
 test('anything a browser page sends is refused, token or not', async () => {
   assert.equal((await call({ origin: 'https://evil.example', authorization: 'Bearer x' })).status, 403);
-  assert.equal((await call({ origin: 'http://flightdeck.vlolabs' })).status, 403);
+  assert.equal((await call({ origin: 'http://flightdeck.localhost' })).status, 403);
 });

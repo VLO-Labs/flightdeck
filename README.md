@@ -4,32 +4,78 @@ An IDE for directing code instead of typing it. You **see** each project as diag
 from its code, and **steer** it by chatting with Claude Code. The agent does the work; you watch
 where in the system it happens and approve what it wants to run.
 
-Single user (Hayk), running **locally on the Mac as Flightdeck.app**, driving the **unmodified
-`claude` CLI on the Claude subscription** — never API tokens.
+It is a **personal, single-user tool**: it runs on your own machine, loopback only, and drives the
+**unmodified `claude` CLI with your own Claude subscription login** — never API keys (see
+[PLAN.md §5](PLAN.md) for the terms this relies on). Built for macOS as Flightdeck.app; the server
+itself is plain Node and also runs from a checkout on Linux.
 
-**Status (2026-10-11):** chat, maps, plans and the requirements workspace built and in daily use.
-Private repo `VLO-Labs/flightdeck`.
+**Status (2026-10-14):** chat, maps, plans and the requirements workspace built and in daily use by
+its author. Expect rough edges; it is shared as-is.
 
-## Run it
-**The app (how it runs):** Flightdeck.app on the Mac. Opening it starts the server and opens the
-browser at http://flightdeck.localhost:8100; quitting it stops the server.
+## What you need
+- **macOS** for Flightdeck.app (the Xcode command line tools provide `swiftc`: `xcode-select --install`).
+  Any OS with Node for the server alone.
+- **Node 22+** and **git**.
+- **Claude Code** installed and logged in to a Claude subscription: run `claude` once and `/login`.
+  Flightdeck finds it at `~/.local/bin/claude` or on `PATH` (`CLAUDE_BIN` overrides).
+- Your projects as git repositories under one folder, `~/dev` by default (`FLIGHTDECK_BROWSE_ROOT`).
 
-- **Install or update:** `scripts/mac/install.sh` — run it after committing changes. It copies this
-  repo to `~/Library/Application Support/Flightdeck/app`, runs `npm ci` and the build there, and
-  (re)builds `/Applications/Flightdeck.app`. It refuses while a chat turn or map refresh is running,
-  and quits and reopens the app if it was open. The app runs that copy, never this checkout, so a chat
-  editing this repo can't change the running server — and pushing to GitHub doesn't update it.
+## Install (Mac)
+```sh
+git clone https://github.com/VLO-Labs/flightdeck.git && cd flightdeck
+cp .env.example .env      # optional: port, host name, project folders, default model …
+scripts/mac/install.sh
+```
+Opening **Flightdeck.app** starts the server and opens the browser at http://flightdeck.localhost:8100;
+quitting it stops the server. The Dock icon reopens the page.
+
+- **Update:** `git pull`, then `scripts/mac/install.sh` again. It copies this repo to
+  `~/Library/Application Support/Flightdeck/app`, runs `npm ci` and the build there, and (re)builds
+  `/Applications/Flightdeck.app`. It refuses while a chat turn or map refresh is running, and quits
+  and reopens the app if it was open. The app runs that copy, never the checkout, so a chat editing
+  this repo can't change the running server.
 - **Data:** `~/Library/Application Support/Flightdeck/data` (SQLite + chat feeds); untouched by
-  updates, and new tables/columns are added on start. **Log:** `~/Library/Logs/Flightdeck.log`.
+  updates, new tables and columns are added on start. **Log:** `~/Library/Logs/Flightdeck.log`.
 - **Stop:** quit the app, or `scripts/mac/stop.sh`.
-- **Port-less address (optional, once):** `sudo scripts/mac/port80.sh` gives http://flightdeck.vlolabs
-  (its own loopback IP, port 80 → 8101). Loopback only either way: nothing on the network can reach it.
+- **Port-less address (optional):** set `FLIGHTDECK_BARE_HOST=flightdeck.test` (any name) in `.env`,
+  run `sudo scripts/mac/port80.sh` once, then `scripts/mac/install.sh` again. The name gets its own
+  loopback IP and port 80 forwards to the server. Loopback only either way: nothing on the network
+  can reach Flightdeck.
 
-**Dev (from this checkout):** `npm ci && npx vite build && FLIGHTDECK_DATA=./data FLIGHTDECK_PORT=8199 npm start`
-— a separate port and data folder, so it never touches the app's. Tests: `npm test`; types: `npm run typecheck`.
+## Configure
+Everything is set through environment variables, read from a `.env` file next to the code (the
+install script copies the repo's `.env` beside the app) or from the environment, which wins.
+[`.env.example`](.env.example) lists them all with their defaults; the ones most people touch:
 
-The earlier vlolabsdev deployment (systemd service, `make flightdeck`, Cloudflare Tunnel + SSO
-gateway) is **not used**; the gateway listener code (`FLIGHTDECK_GATEWAY_HOST`) remains but is off.
+| Variable | Default | What |
+|---|---|---|
+| `FLIGHTDECK_PORT`, `FLIGHTDECK_HOST_NAME` | `8100`, `flightdeck.localhost` | The address the page opens at |
+| `FLIGHTDECK_BROWSE_ROOT` | `~/dev` | Projects must live inside this folder |
+| `FLIGHTDECK_PROJECTS_DIR` | the browse root | Where *+ New project* creates projects |
+| `FLIGHTDECK_MODEL` | `claude-opus-5-5` | Model new projects start with (`haiku` to spare the plan) |
+| `CLAUDE_BIN` | `~/.local/bin/claude` or `claude` on PATH | The Claude Code binary |
+| `FLIGHTDECK_DATA` | app data folder / `./data` | Database and chat feeds |
+
+Change one of the address variables or `CLAUDE_BIN` and re-run `scripts/mac/install.sh`; the app
+bakes those in. The rest take effect on the next start.
+
+## Run from a checkout
+```sh
+npm ci && npx vite build
+FLIGHTDECK_DATA=./data FLIGHTDECK_PORT=8199 npm start
+```
+A separate port and data folder, so it never touches the installed app's. Checks: `npm test`,
+`npm run typecheck`. Contributors: see [`CLAUDE.md`](CLAUDE.md) for how changes go live.
+
+## How it stays yours
+- **Loopback only.** The server binds 127.0.0.1 and refuses requests whose `Host` isn't a name of
+  this machine (blocks DNS rebinding) or whose `Origin` is another site; state changes must be JSON.
+  No login, because nothing else can reach it.
+- **Approval cards.** Claude Code's tool calls go through an HTTP hook that holds them until you
+  click Allow or Deny, under per-project rules you set. Discuss chats can't change files at all;
+  one Build chat at a time holds a project's edit lock.
+- **Subscription, not keys.** `ANTHROPIC_API_KEY` is stripped from the agent's environment, and a
+  run aborts if the CLI reports any auth other than the subscription login.
 
 | Read | For |
 |------|-----|

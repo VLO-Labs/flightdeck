@@ -395,6 +395,7 @@ export type ProcessGroup = z.infer<typeof ProcessGroup>;
 export const BrowseResponse = z.object({
   path: z.string(),
   parent: z.string().nullable(), // null at the browse root
+  newProjectsDir: z.string(), // where "+ New project" proposes to create a project (FLIGHTDECK_PROJECTS_DIR)
   addable: z.boolean(), // a git repository, or a folder whose direct subfolders are repositories
   dirs: z.array(z.object({ name: z.string(), path: z.string(), addable: z.boolean() })),
 });

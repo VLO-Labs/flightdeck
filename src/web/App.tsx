@@ -220,19 +220,21 @@ export function App() {
   );
 }
 
-// Where projects live on this machine (the server's browse root, e.g. ~/dev): forms start there.
-let rootPromise: Promise<string> | null = null;
-function useProjectsRoot(): string {
-  const [root, setRoot] = useState('');
+// Where projects live on this machine: the server's browse root (e.g. ~/dev), which "Add existing"
+// starts from, and the folder new projects are created in (FLIGHTDECK_PROJECTS_DIR, inside it).
+type Roots = { root: string; newProjectsDir: string };
+let rootsPromise: Promise<Roots> | null = null;
+function useProjectsRoots(): Roots {
+  const [roots, setRoots] = useState<Roots>({ root: '', newProjectsDir: '' });
   useEffect(() => {
-    rootPromise ??= api.browse().then(r => r.path).catch(() => '');
-    void rootPromise.then(setRoot);
+    rootsPromise ??= api.browse().then(r => ({ root: r.path, newProjectsDir: r.newProjectsDir })).catch(() => ({ root: '', newProjectsDir: '' }));
+    void rootsPromise.then(setRoots);
   }, []);
-  return root;
+  return roots;
 }
 
 function AddProject({ onAdded, onCancel }: { onAdded: (p: Project) => void; onCancel: () => void }) {
-  const root = useProjectsRoot();
+  const { root } = useProjectsRoots();
   const [typed, setPath] = useState<string | null>(null);
   const path = typed ?? (root ? `${root}/` : '');
   const [name, setName] = useState('');
@@ -301,14 +303,14 @@ function NewProject({ onCreated, onCancel }: {
 }) {
   const [name, setName] = useState('');
   // The folder follows the name until it's edited by hand.
-  const root = useProjectsRoot();
+  const { newProjectsDir } = useProjectsRoots();
   const [path, setPath] = useState<string | null>(null);
   const [start, setStart] = useState<'requirements' | 'scaffold'>('requirements');
   const [stack, setStack] = useState<string>(''); // '' = decide later (requirements first only)
   const [description, setDescription] = useState('');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
-  const folder = path ?? (root ? `${root}/vlolabs/${slug(name)}` : '');
+  const folder = path ?? (newProjectsDir ? `${newProjectsDir}/${slug(name)}` : '');
   return (
     <form
       className="add-project"
@@ -327,7 +329,7 @@ function NewProject({ onCreated, onCancel }: {
       }}
     >
       <input value={name} onChange={e => setName(e.target.value)} placeholder="Name" required />
-      <input value={folder} onChange={e => setPath(e.target.value)} placeholder="Folder on the box" />
+      <input value={folder} onChange={e => setPath(e.target.value)} placeholder="Folder" />
       <fieldset className="start-choice">
         <legend className="label">Start with</legend>
         <label>
